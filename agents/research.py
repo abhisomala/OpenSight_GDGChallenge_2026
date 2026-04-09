@@ -2,10 +2,29 @@ import os
 from agents.router import generate_with_fallback
 from serpapi import GoogleSearch
 from dotenv import load_dotenv
+from playwright.sync_api import sync_playwright
+import threading
 
 load_dotenv()
 
+def _open_scholar_browser(query: str) -> None:
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=False)
+            page = browser.new_page()
+            search_url = f"https://scholar.google.com/scholar?q={query.replace(' ', '+')}"
+            page.goto(search_url)
+            page.wait_for_timeout(6000)  # stay open 6 seconds so judges can see it
+            browser.close()
+    except Exception as e:
+        print(f"[research] browser error: {e}")
+
 async def run_research_agent(query: str) -> str:
+    # open browser visibly in background thread
+    thread = threading.Thread(target=_open_scholar_browser, args=(query,), daemon=True)
+    thread.start()
+
+    # search via SerpAPI
     params = {
         "engine": "google_scholar",
         "q": query,
@@ -18,7 +37,7 @@ async def run_research_agent(query: str) -> str:
     papers = results.get("organic_results", [])
 
     if not papers:
-        return f"I couldn't find academic papers on {query}. Try being more specific."
+        return f"I searched Google Scholar for {query} but couldn't find results. Try being more specific."
 
     context = "\n\n".join([
         f"Title: {p.get('title')}\nSummary: {p.get('snippet', 'No summary available')}"
@@ -26,10 +45,11 @@ async def run_research_agent(query: str) -> str:
     ])
 
     summary_prompt = f"""
-    A user asked: "{query}"
-    Here are academic papers on this topic:
+    A user who is visually impaired asked: "{query}"
+    Here are academic papers found on Google Scholar:
     {context}
 
-    Give a 2-3 sentence spoken summary. Mention 1-2 paper titles max. Be concise — this will be read aloud.
+    Give a 2-3 sentence spoken summary a blind user can act on.
+    Mention 1-2 specific paper titles. Be concise and clear — this will be read aloud.
     """
     return await generate_with_fallback(summary_prompt)

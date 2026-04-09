@@ -1,17 +1,12 @@
-import asyncio
-import json
 import math
 import os
-import platform
-import queue
-import subprocess
 import threading
-import time
 import tkinter as tk
-from collections import deque
-
-import sounddevice as sd
 from dotenv import load_dotenv
+
+from app_state import AppState
+from audio_engine import init_microphone, run_deepgram_loop, voice_worker
+from agent import process_recognized_text, set_agent_status, AGENT_ORDER
 
 load_dotenv()
 
@@ -20,55 +15,25 @@ try:
 except Exception:
     websockets = None
 
-SAMPLE_RATE = 48000
-
 
 class LiquidGlassDisplay:
-    AGENT_ORDER = ["BRAIN", "SHOPPING", "CALENDAR", "RESEARCH", "GENERAL"]
 
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
-        self.listening = False
-        self.stop_event = threading.Event()
-        self.shutdown_event = threading.Event()
-        self.listen_thread: threading.Thread | None = None
-        self.session_token = 0
-        self.pulse_step = 0
+        self.state = AppState()
+        self.state.agent_enabled = websockets is not None
         self.pulse_job = None
 
-        self.voice_queue: queue.Queue[str | None] = queue.Queue()
-        self.voice_thread = threading.Thread(target=self._voice_worker, daemon=True)
+        init_microphone(self.state)
+
+        self.voice_thread = threading.Thread(
+            target=voice_worker, args=(self.state,), daemon=True
+        )
         self.voice_thread.start()
 
-        self.is_speaking = False
-        self.suppress_until = 0.0
-        self.sample_rate = SAMPLE_RATE
-        self.transcript_history: list[str] = []
-        self.live_transcript = ""
-        self.max_transcript_lines = 6
-        self.agent_ws_url = "ws://127.0.0.1:8080/ws"
-        self.agent_enabled = websockets is not None
-        self.agent_focus = "IDLE"
-        self.agent_phase = "idle"
-
-        self.orb_cx = 0
-        self.orb_cy = 0
-        self.orb_r = 0
-
-        try:
-            default_input_device = sd.default.device[0]
-            info = sd.query_devices(default_input_device, "input")
-            print(
-                f"[mic] Using default input device {default_input_device}: "
-                f"{info['name']} @ {int(info['default_samplerate'])}Hz"
-            )
-            self.sample_rate = int(info["default_samplerate"])
-        except Exception as e:
-            print(f"[mic] Default input device error: {e}, falling back to library default")
-
         self.root.title("OpenSight")
-        self.root.geometry("1024x360")
-        self.root.minsize(1024, 360)
+        self.root.geometry("720x360")
+        self.root.minsize(720, 360)
         self.root.resizable(False, False)
         self.root.configure(bg="#0b1826")
 
@@ -95,6 +60,7 @@ class LiquidGlassDisplay:
     # ── drawing ──
 
     def redraw(self, event=None) -> None:
+        s = self.state
         w = self.bg_canvas.winfo_width()
         h = self.bg_canvas.winfo_height()
         self.bg_canvas.delete("all")
@@ -114,167 +80,125 @@ class LiquidGlassDisplay:
 
         self.bg_canvas.create_rectangle(rail_x, 0, w, h, fill="#edf3f7", outline="")
         self.bg_canvas.create_line(rail_x, 0, rail_x, h, fill="#b7c9d6", width=2)
-
-        self._draw_agent_rail(rail_x, 0, w, h)
+        self._draw_agent_rail(rail_x, w, h)
 
         orb_r = max(24, min(36, main_w // 28))
         cx = max(180, int(main_w * 0.50))
-        cy = int(h * 0.40)
-        self.orb_cx, self.orb_cy, self.orb_r = cx, cy, orb_r
+        cy = h - orb_r - 16
+        s.orb_cx, s.orb_cy, s.orb_r = cx, cy, orb_r
 
-        if self.listening:
+        if s.listening:
             rings = [orb_r + 22, orb_r + 14, orb_r + 8]
             cols = ["#88cbe8", "#a7ddf2", "#c7ebf8"]
             for i, (base_r, col) in enumerate(zip(rings, cols)):
-                phase = (self.pulse_step + i * 3) % 15
+                phase = (s.pulse_step + i * 3) % 15
                 rr = max(orb_r + 3, base_r - phase)
                 self.bg_canvas.create_oval(cx - rr, cy - rr, cx + rr, cy + rr, fill=col, outline="")
         else:
             for ring_r, col in ((orb_r + 18, "#9fd5ef"), (orb_r + 10, "#b5e0f4"), (orb_r + 4, "#caeaf8")):
                 self.bg_canvas.create_oval(cx - ring_r, cy - ring_r, cx + ring_r, cy + ring_r, fill=col, outline="")
 
-        core_fill = "#96d2e4" if self.listening else "#e5f8ff"
-        icon_col = "#245972" if self.listening else "#356985"
+        core_fill = "#96d2e4" if s.listening else "#e5f8ff"
+        icon_col = "#245972" if s.listening else "#356985"
         self.bg_canvas.create_oval(cx - orb_r, cy - orb_r, cx + orb_r, cy + orb_r, fill=core_fill, outline="")
-        self.draw_mic_icon(cx, cy, icon_col)
+        self._draw_mic_icon(cx, cy, icon_col)
 
-        status = "LISTENING" if self.listening else "IDLE"
-        self.bg_canvas.create_text(cx, cy + orb_r + 24, text=status, fill="#4d7390", font=("SF Mono", 10, "bold"))
+        status = "LISTENING" if s.listening else "IDLE"
+        self.bg_canvas.create_text(cx, cy - orb_r - 18, text=status, fill="#4d7390", font=("SF Mono", 11, "bold"))
 
-        transcript_title_y = cy + orb_r + 58
-        self.bg_canvas.create_text(cx, transcript_title_y, text="TRANSCRIPT", fill="#4d7390", font=("SF Mono", 9, "bold"))
-        transcript_lines = self.transcript_history[-self.max_transcript_lines:]
-        if self.live_transcript:
-            transcript_lines = transcript_lines + [self.live_transcript]
-        transcript_text = "\n".join(transcript_lines) if transcript_lines else "Speak and your words will appear here..."
-        self.bg_canvas.create_text(
-            cx, transcript_title_y + 18,
-            text=transcript_text,
-            fill="#2e5c7a" if self.transcript_history else "#5c86a1",
-            font=("SF Mono", 11),
-            width=max(260, int(main_w * 0.78)),
-            justify="center",
-            anchor="n",
+        stack_cx = max(180, int(main_w * 0.50))
+        text_w = max(260, int(main_w * 0.78))
+        top_zone_y = int(h * 0.20)
+        divider_y = int(h * 0.48)
+        bottom_zone_y = int(h * 0.68)
+
+        self.bg_canvas.create_text(stack_cx, top_zone_y - 22, text="YOU",
+                                    fill="#7aa5bc", font=("SF Mono", 8, "bold"), anchor="center")
+        user_display = s.live_transcript if s.live_transcript else (
+            s.last_user_text if s.last_user_text else "Speak and your words will appear here..."
         )
+        self.bg_canvas.create_text(stack_cx, top_zone_y, text=user_display,
+                                    fill="#2b5d79" if (s.live_transcript or s.last_user_text) else "#6a8ba2",
+                                    font=("SF Mono", 15), width=text_w, justify="center", anchor="center")
 
-    def draw_mic_icon(self, cx: int, cy: int, color: str) -> None:
+        self.bg_canvas.create_line(stack_cx - 120, divider_y, stack_cx + 120, divider_y,
+                                    fill="#a8c4d4", width=1, dash=(4, 4))
+
+        self.bg_canvas.create_text(stack_cx, bottom_zone_y - 22, text="OPENSIGHT",
+                                    fill="#7aa5bc", font=("SF Mono", 8, "bold"), anchor="center")
+        ai_display = s.last_ai_text if s.last_ai_text else "Response will appear here..."
+        self.bg_canvas.create_text(stack_cx, bottom_zone_y, text=ai_display,
+                                    fill="#1a4a62" if s.last_ai_text else "#6a8ba2",
+                                    font=("SF Mono", 15), width=text_w, justify="center", anchor="center")
+
+    def _draw_mic_icon(self, cx: int, cy: int, color: str) -> None:
         self.bg_canvas.create_oval(cx - 9, cy - 14, cx + 9, cy + 4, fill=color, outline="")
         self.bg_canvas.create_rectangle(cx - 4, cy + 1, cx + 4, cy + 14, fill=color, outline="")
         self.bg_canvas.create_arc(cx - 12, cy - 7, cx + 12, cy + 9, start=200, extent=140, style="arc", outline=color, width=2)
         self.bg_canvas.create_line(cx, cy + 14, cx, cy + 21, fill=color, width=2)
         self.bg_canvas.create_line(cx - 7, cy + 21, cx + 7, cy + 21, fill=color, width=2)
 
-    def _draw_agent_rail(self, rail_x: int, y1: int, w: int, h: int) -> None:
-        self.bg_canvas.create_text(
-            rail_x + 18,
-            18,
-            text="BRAIN / AGENTS",
-            fill="#507088",
-            font=("SF Mono", 9, "bold"),
-            anchor="nw",
-        )
-
+    def _draw_agent_rail(self, rail_x: int, w: int, h: int) -> None:
+        self.bg_canvas.create_text(rail_x + 18, 18, text="BRAIN / AGENTS",
+                                    fill="#507088", font=("SF Mono", 10, "bold"), anchor="nw")
         card_left = rail_x + 14
         card_right = w - 14
-        card_w = card_right - card_left
         card_h = 40
         gap = 8
         start_y = 42
 
-        for index, agent in enumerate(self.AGENT_ORDER):
+        for index, agent in enumerate(AGENT_ORDER):
             y_top = start_y + index * (card_h + gap)
             y_bottom = y_top + card_h
-            active = agent == self.agent_focus
+            active = agent == self.state.agent_focus
             detail = self._agent_detail(agent)
             fill, outline, title_color, detail_color, accent = self._agent_card_colors(agent, active)
 
             if active:
-                self._rounded_rect(
-                    card_left + 2,
-                    y_top + 3,
-                    card_right + 2,
-                    y_bottom + 3,
-                    radius=12,
-                    fill="#cfdbe6",
-                    outline="",
-                )
+                self._rounded_rect(card_left + 2, y_top + 3, card_right + 2, y_bottom + 3,
+                                   radius=12, fill="#cfdbe6", outline="")
 
-            self._rounded_rect(
-                card_left,
-                y_top,
-                card_right,
-                y_bottom,
-                radius=12,
-                fill=fill,
-                outline=outline,
-                width=1,
-            )
+            self._rounded_rect(card_left, y_top, card_right, y_bottom,
+                               radius=12, fill=fill, outline=outline, width=1)
 
-            dot_r = 4 if not active else 5 + (self.pulse_step % 4)
+            dot_r = 4 if not active else 5 + (self.state.pulse_step % 4)
             dot_x = card_left + 16
             dot_y = y_top + 18
-            self.bg_canvas.create_oval(dot_x - dot_r, dot_y - dot_r, dot_x + dot_r, dot_y + dot_r, fill=accent, outline="")
-            self.bg_canvas.create_text(
-                card_left + 32,
-                y_top + 8,
-                text=agent,
-                fill=title_color,
-                font=("SF Mono", 10, "bold"),
-                anchor="nw",
-            )
-            self.bg_canvas.create_text(
-                card_left + 32,
-                y_top + 23,
-                text=detail,
-                fill=detail_color,
-                font=("SF Mono", 8),
-                anchor="nw",
-            )
+            self.bg_canvas.create_oval(dot_x - dot_r, dot_y - dot_r, dot_x + dot_r, dot_y + dot_r,
+                                       fill=accent, outline="")
+            self.bg_canvas.create_text(card_left + 32, y_top + 8, text=agent,
+                                       fill=title_color, font=("SF Mono", 10, "bold"), anchor="nw")
+            self.bg_canvas.create_text(card_left + 32, y_top + 23, text=detail,
+                                       fill=detail_color, font=("SF Mono", 9), anchor="nw")
 
     def _agent_detail(self, agent: str) -> str:
         return {
-            "BRAIN": "routing the request",
+            "BRAIN":    "routing requests",
             "SHOPPING": "scanning options",
             "CALENDAR": "checking schedules",
             "RESEARCH": "pulling sources",
-            "GENERAL": "composing response",
+            "GENERAL":  "composing responses",
         }.get(agent, "idle")
 
-    def _rounded_rect(
-        self,
-        x1: int,
-        y1: int,
-        x2: int,
-        y2: int,
-        radius: int,
-        *,
-        fill: str,
-        outline: str,
-        width: int = 1,
-    ) -> None:
+    def _rounded_rect(self, x1, y1, x2, y2, radius, *, fill, outline, width=1) -> None:
         points = [
-            x1 + radius, y1,
-            x2 - radius, y1,
-            x2, y1,
-            x2, y1 + radius,
-            x2, y2 - radius,
-            x2, y2,
-            x2 - radius, y2,
-            x1 + radius, y2,
-            x1, y2,
-            x1, y2 - radius,
-            x1, y1 + radius,
-            x1, y1,
+            x1 + radius, y1, x2 - radius, y1,
+            x2, y1, x2, y1 + radius,
+            x2, y2 - radius, x2, y2,
+            x2 - radius, y2, x1 + radius, y2,
+            x1, y2, x1, y2 - radius,
+            x1, y1 + radius, x1, y1,
         ]
-        self.bg_canvas.create_polygon(points, smooth=True, splinesteps=24, fill=fill, outline=outline, width=width)
+        self.bg_canvas.create_polygon(points, smooth=True, splinesteps=24,
+                                       fill=fill, outline=outline, width=width)
 
-    def _agent_card_colors(self, agent: str, active: bool) -> tuple[str, str, str, str, str]:
+    def _agent_card_colors(self, agent: str, active: bool) -> tuple:
         palette = {
-            "BRAIN": ("#d8ecff", "#7cb7e6", "#214f67", "#4f7488", "#49a1e6"),
+            "BRAIN":    ("#d8ecff", "#7cb7e6", "#214f67", "#4f7488", "#49a1e6"),
             "SHOPPING": ("#e2f5ea", "#89cfa0", "#265a3d", "#587569", "#56b97a"),
             "CALENDAR": ("#fff0d6", "#e3b15a", "#705117", "#8c7854", "#e0a238"),
             "RESEARCH": ("#e7e0ff", "#b19ae8", "#4f3e7d", "#72688f", "#8b6be8"),
-            "GENERAL": ("#e3edf4", "#9eb4c4", "#334a5d", "#63798a", "#7aa7c2"),
+            "GENERAL":  ("#e3edf4", "#9eb4c4", "#334a5d", "#63798a", "#7aa7c2"),
         }
         inactive = ("#edf1f4", "#c8d3dc", "#6d7f8d", "#8a99a5", "#a7b4bf")
         return palette.get(agent, inactive) if active else inactive
@@ -282,190 +206,65 @@ class LiquidGlassDisplay:
     # ── listening ──
 
     def on_canvas_click(self, event) -> None:
-        dx = event.x - self.orb_cx
-        dy = event.y - self.orb_cy
-        if math.sqrt(dx * dx + dy * dy) <= self.orb_r + 18:
+        dx = event.x - self.state.orb_cx
+        dy = event.y - self.state.orb_cy
+        if math.sqrt(dx * dx + dy * dy) <= self.state.orb_r + 18:
             self.toggle_listening()
 
     def toggle_listening(self) -> None:
-        self.listening = not self.listening
-        self.session_token += 1
+        s = self.state
+        s.listening = not s.listening
+        s.session_token += 1
 
-        if self.listening:
-            self.stop_event.clear()
-            self.is_speaking = False
-            self.suppress_until = 0.0
-            self.agent_focus = "BRAIN"
-            self.agent_phase = "listening"
-            current_session = self.session_token
-            self.listen_thread = threading.Thread(
-                target=self._run_deepgram_loop,
-                args=(current_session,),
+        if s.listening:
+            s.stop_event.clear()
+            s.is_speaking = False
+            s.suppress_until = 0.0
+            s.agent_focus = "BRAIN"
+            s.agent_phase = "listening"
+            current_session = s.session_token
+            threading.Thread(
+                target=run_deepgram_loop,
+                args=(s, current_session, self.redraw,
+                      self._on_final_transcript, self._on_interim_transcript),
                 daemon=True,
-            )
-            self.listen_thread.start()
+            ).start()
             self._start_pulse_loop()
         else:
-            self.stop_event.set()
-            self.agent_focus = "IDLE"
-            self.agent_phase = "idle"
+            s.stop_event.set()
+            s.agent_focus = "IDLE"
+            s.agent_phase = "idle"
             self._stop_pulse_loop()
 
         self.redraw()
 
-    def _run_deepgram_loop(self, session_token: int) -> None:
-        asyncio.run(self._deepgram_retry(session_token))
+    def _on_final_transcript(self, transcript: str) -> None:
+        self._safe_after(0, self._apply_final_transcript, transcript)
 
-    async def _deepgram_retry(self, session_token: int) -> None:
-        retries = 0
-        max_retries = 5
-        while not self.stop_event.is_set() and session_token == self.session_token:
-            try:
-                await self._deepgram_listen(session_token)
-            except Exception as e:
-                print(f"[deepgram] error: {e}")
-            if self.stop_event.is_set() or session_token != self.session_token:
-                break
-            retries += 1
-            if retries > max_retries:
-                self._safe_after(0, self._append_transcript, "[Deepgram: too many retries, stopping]")
-                break
-            wait = min(2 ** retries, 30)
-            print(f"[deepgram] retrying in {wait}s (attempt {retries}/{max_retries})")
-            self._safe_after(0, self._append_transcript, f"[Reconnecting in {wait}s...]")
-            await asyncio.sleep(wait)
+    def _apply_final_transcript(self, transcript: str) -> None:
+        s = self.state
+        s.last_user_text = transcript
+        s.live_transcript = ""
+        s.transcript_history.append(f"You: {transcript}")
+        self.redraw()
+        threading.Thread(
+            target=process_recognized_text,
+            args=(s, transcript, s.session_token, self._on_ai_response, self._safe_after),
+            daemon=True,
+        ).start()
 
-    async def _deepgram_listen(self, session_token: int) -> None:
-        api_key = os.getenv("DEEPGRAM_API_KEY")
-        if not api_key:
-            self._safe_after(0, self._append_transcript, "[Deepgram API key missing in .env]")
-            return
+    def _on_interim_transcript(self, text: str) -> None:
+        self._safe_after(0, self._apply_interim, text)
 
-        url = (
-            "wss://api.deepgram.com/v1/listen"
-            "?model=nova-2"
-            "&language=en-US"
-            "&smart_format=true"
-            "&interim_results=true"
-            "&endpointing=250"
-            "&encoding=linear16"
-            "&channels=1"
-            f"&sample_rate={self.sample_rate}"
-        )
-        headers = {"Authorization": f"Token {api_key}"}
-        self._safe_after(0, self._append_transcript, "[Connecting to Deepgram...]")
+    def _apply_interim(self, text: str) -> None:
+        self.state.live_transcript = text.strip()
+        self.redraw()
 
-        try:
-            async with websockets.connect(
-                url,
-                additional_headers=headers,
-                ping_interval=None,
-            ) as ws:
-                self._safe_after(0, self._append_transcript, "[Deepgram connected — speak now]")
-                loop = asyncio.get_running_loop()
-                ws_alive = True
-                audio_queue: queue.Queue[bytes | None] = queue.Queue(maxsize=50)
-
-                async def send_audio_frames() -> None:
-                    while ws_alive and not self.stop_event.is_set() and session_token == self.session_token:
-                        frame = await asyncio.to_thread(audio_queue.get)
-                        if frame is None:
-                            return
-                        await ws.send(frame)
-
-                def audio_callback(indata, frames, t, status):
-                    if status:
-                        print(f"[mic] callback status: {status}")
-                    if not ws_alive:
-                        return
-                    if self.stop_event.is_set():
-                        return
-                    if session_token != self.session_token:
-                        return
-                    if self.is_speaking:
-                        return
-                    now = time.monotonic()
-                    if now < self.suppress_until:
-                        remaining = self.suppress_until - now
-                        if remaining > 0.05:
-                            print(f"[mic] suppressed for {remaining:.2f}s")
-                        return
-                    frame = bytes(indata)
-                    try:
-                        audio_queue.put_nowait(frame)
-                    except queue.Full:
-                        try:
-                            audio_queue.get_nowait()
-                        except queue.Empty:
-                            pass
-                        try:
-                            audio_queue.put_nowait(frame)
-                        except queue.Full:
-                            print("[mic] audio queue still full; dropping frame")
-
-                stream = sd.InputStream(
-                    samplerate=self.sample_rate,
-                    blocksize=4800,
-                    dtype="int16",
-                    channels=1,
-                    callback=audio_callback,
-                )
-                stream.start()
-                print(f"[mic] stream started at {self.sample_rate}Hz")
-
-                sender_task = asyncio.create_task(send_audio_frames())
-
-                try:
-                    while not self.stop_event.is_set() and session_token == self.session_token:
-                        try:
-                            msg = await asyncio.wait_for(ws.recv(), timeout=1.0)
-                            data = json.loads(msg)
-                            msg_type = data.get("type", "")
-
-                            if msg_type == "Results":
-                                transcript = (
-                                    data.get("channel", {})
-                                        .get("alternatives", [{}])[0]
-                                        .get("transcript", "")
-                                )
-                                is_final = bool(data.get("is_final") or data.get("speech_final"))
-                                if transcript and transcript.strip():
-                                    if is_final:
-                                        print(f"[deepgram] final: {transcript}")
-                                        self._safe_after(0, self._append_transcript, f"You: {transcript}")
-                                        self._safe_after(0, self._set_live_transcript, "")
-                                        threading.Thread(
-                                            target=self._process_recognized_text,
-                                            args=(transcript, session_token),
-                                            daemon=True,
-                                        ).start()
-                                    else:
-                                        print(f"[deepgram] interim: {transcript}")
-                                        self._safe_after(0, self._set_live_transcript, f"... {transcript}")
-                            elif msg_type == "Metadata":
-                                print(f"[deepgram] metadata: {data}")
-                            elif msg_type == "Error":
-                                print(f"[deepgram] error msg: {data}")
-
-                        except asyncio.TimeoutError:
-                            continue
-                        except Exception as e:
-                            print(f"[deepgram] recv error: {e}")
-                            break
-                finally:
-                    ws_alive = False
-                    try:
-                        audio_queue.put_nowait(None)
-                    except queue.Full:
-                        pass
-                    sender_task.cancel()
-                    stream.stop()
-                    stream.close()
-                    print("[mic] stream stopped")
-
-        except Exception as e:
-            self._safe_after(0, self._append_transcript, f"[Deepgram error: {e}]")
-            print(f"[deepgram] connection error: {e}")
+    def _on_ai_response(self, response: str) -> None:
+        s = self.state
+        s.last_ai_text = response
+        s.transcript_history.append(f"OpenSight: {response}")
+        self.redraw()
 
     # ── pulse animation ──
 
@@ -480,172 +279,12 @@ class LiquidGlassDisplay:
             self.pulse_job = None
 
     def _pulse_tick(self) -> None:
-        if not self.listening:
+        if not self.state.listening:
             return
-        self.pulse_step = (self.pulse_step + 1) % 30
+        self.state.pulse_step = (self.state.pulse_step + 1) % 30
         self.redraw()
         self.pulse_job = self.root.after(80, self._pulse_tick)
 
-    # ── agent ──
-
-    def _process_recognized_text(self, text: str, session_token: int) -> None:
-        if session_token != self.session_token:
-            return
-        if len(text.split()) < 3:
-            return
-        if not self.agent_enabled:
-            self.voice_queue.put(text)
-            return
-
-        response = self._query_agent_response(text, session_token)
-        if session_token != self.session_token:
-            return
-        if response:
-            self._safe_after(0, self._append_transcript, f"OpenSight: {response}")
-            self.voice_queue.put(response)
-
-    def _query_agent_response(self, user_text: str, session_token: int) -> str:
-        if websockets is None:
-            self._safe_after(0, self._set_agent_state, "offline")
-            return ""
-        try:
-            return asyncio.run(self._query_agent_response_async(user_text, session_token))
-        except Exception as e:
-            print(f"[agent] query error: {e}")
-            self._safe_after(0, self._set_agent_state, "offline")
-            return ""
-
-    async def _query_agent_response_async(self, user_text: str, session_token: int) -> str:
-        self._safe_after(0, self._set_agent_status, "BRAIN", "thinking", "routing")
-        try:
-            async with websockets.connect(self.agent_ws_url, open_timeout=5, close_timeout=1) as ws:
-                await ws.send(json.dumps({"text": user_text}))
-                final_response = ""
-
-                while True:
-                    if session_token != self.session_token:
-                        return ""
-                    raw = await asyncio.wait_for(ws.recv(), timeout=60)
-                    payload = json.loads(raw)
-                    msg_type = payload.get("type")
-
-                    if msg_type == "status":
-                        agent = str(payload.get("agent", "BRAIN")).strip() or "BRAIN"
-                        state = str(payload.get("state", "thinking")).strip() or "thinking"
-                        detail = str(payload.get("detail", payload.get("label", ""))).strip()
-                        self._safe_after(0, self._set_agent_status, agent, state, detail)
-                    elif msg_type == "response":
-                        final_response = str(payload.get("text", "")).strip()
-                        break
-
-                self._safe_after(0, self._set_agent_status, "IDLE", "idle", "")
-                return final_response
-        except Exception as e:
-            print(f"[agent] ws error: {e}")
-            self._safe_after(0, self._set_agent_status, "IDLE", "offline", "")
-            return ""
-
-    def _set_agent_status(self, agent: str, state: str, detail: str = "") -> None:
-        normalized_agent = self._normalize_agent(agent)
-        normalized_state = state.strip().lower() if state else "idle"
-        changed = normalized_agent != self.agent_focus or normalized_state != self.agent_phase
-        self.agent_focus = normalized_agent
-        self.agent_phase = normalized_state
-        if changed:
-            self.redraw()
-
-    def _set_agent_state(self, state: str) -> None:
-        normalized = state.strip().lower() if state else "idle"
-        if normalized == "idle":
-            self._set_agent_status("IDLE", "idle", "")
-            return
-        if normalized == "offline":
-            self._set_agent_status("IDLE", "offline", "")
-            return
-        if normalized == "thinking":
-            self._set_agent_status("BRAIN", "thinking", "routing")
-            return
-        if normalized == "listening":
-            self._set_agent_status("BRAIN", "listening", "capturing speech")
-            return
-        if normalized.startswith("step"):
-            detail = normalized.split(":", 1)[1].strip() if ":" in normalized else normalized
-            self._set_agent_status(self._agent_from_detail(detail), "thinking", detail)
-            return
-        self._set_agent_status(self._agent_from_detail(normalized), normalized, normalized)
-
-    def _normalize_agent(self, agent: str) -> str:
-        normalized = agent.strip().upper() if agent else "IDLE"
-        if normalized in {"ROUTER", "BRAIN", "PLANNER"}:
-            return "BRAIN"
-        if normalized in self.AGENT_ORDER:
-            return normalized
-        if normalized in {"IDLE", "OFFLINE"}:
-            return "IDLE"
-        return "GENERAL"
-
-    def _agent_from_detail(self, detail: str) -> str:
-        lowered = detail.lower()
-        if "amazon" in lowered or "shopping" in lowered or "product" in lowered:
-            return "SHOPPING"
-        if "calendar" in lowered or "schedule" in lowered:
-            return "CALENDAR"
-        if "research" in lowered or "paper" in lowered:
-            return "RESEARCH"
-        if "thinking" in lowered or "answer" in lowered or "general" in lowered:
-            return "GENERAL"
-        return "BRAIN"
-
-    def _set_live_transcript(self, text: str) -> None:
-        self.live_transcript = text.strip()
-        self.redraw()
-
-    # ── voice output ──
-
-    def _voice_worker(self) -> None:
-        while not self.shutdown_event.is_set():
-            phrase = self.voice_queue.get()
-            if phrase is None:
-                break
-            try:
-                self.is_speaking = True
-                self._speak_text(phrase)
-            except Exception as e:
-                print(f"[tts] error: {e}")
-            finally:
-                self.is_speaking = False
-                self.suppress_until = time.monotonic() + 0.5
-
-    def _speak_text(self, text: str) -> None:
-        api_key = os.getenv("ELEVENLABS_API_KEY")
-        if api_key:
-            try:
-                from elevenlabs.client import ElevenLabs
-                from elevenlabs import stream
-                el_client = ElevenLabs(api_key=api_key)
-                audio = el_client.text_to_speech.convert(
-                    voice_id="onwK4e9ZLuTAKqWW03F9",
-                    text=text,
-                    model_id="eleven_turbo_v2",
-                )
-                stream(audio)
-                return
-            except Exception as e:
-                print(f"[tts] ElevenLabs error: {e}, falling back")
-
-        system_name = platform.system()
-        if system_name == "Darwin":
-            subprocess.run(["say", "-v", "Ava", "-r", "175", text], check=False)
-        elif system_name == "Windows":
-            safe = text.replace("'", "''")
-            cmd = (
-                "Add-Type -AssemblyName System.Speech; "
-                "$s = New-Object System.Speech.Synthesis.SpeechSynthesizer; "
-                f"$s.Speak('{safe}')"
-            )
-            subprocess.run(["powershell", "-Command", cmd], check=False)
-        else:
-            subprocess.run(["espeak", text], check=False)
     # ── helpers ──
 
     def _safe_after(self, delay_ms: int, callback, *args, **kwargs) -> None:
@@ -657,20 +296,12 @@ class LiquidGlassDisplay:
         except tk.TclError:
             pass
 
-    def _append_transcript(self, text: str) -> None:
-        cleaned = text.replace("\r", " ").replace("\n", " ").strip()
-        if not cleaned:
-            return
-        self.transcript_history.append(cleaned)
-        if len(self.transcript_history) > 80:
-            self.transcript_history = self.transcript_history[-80:]
-        self.redraw()
-
     def close_app(self) -> None:
-        self.session_token += 1
-        self.stop_event.set()
-        self.shutdown_event.set()
-        self.voice_queue.put(None)
+        s = self.state
+        s.session_token += 1
+        s.stop_event.set()
+        s.shutdown_event.set()
+        s.voice_queue.put(None)
         self._stop_pulse_loop()
         self.root.destroy()
 
