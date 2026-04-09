@@ -28,11 +28,10 @@ async def run_research_agent(query: str) -> str:
     client = genai2.Client(api_key=os.getenv("GEMINI_API_KEY"))
     summary_prompt = f"""
     A user asked: "{query}"
-    Here are academic papers found on this topic:
+    Here are academic papers on this topic:
     {context}
 
-    Give a clear, spoken-friendly 3-4 sentence summary mentioning 2-3 specific papers by name.
-    Keep it conversational — it will be read aloud.
+    Give a 2-3 sentence spoken summary. Mention 1-2 paper titles max. Be concise — this will be read aloud.
     """
     response = client.models.generate_content(
         model="gemini-2.5-flash",

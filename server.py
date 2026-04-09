@@ -35,7 +35,7 @@ async def run_agent(intent: str, query: str) -> str:
     else:
         resp = client.models.generate_content(
             model="gemini-2.5-flash",
-            contents=query
+            contents=f"Answer in 2 sentences max, conversationally: {query}"
         )
         return resp.text.strip()
 
@@ -49,6 +49,10 @@ async def websocket_endpoint(ws: WebSocket):
             data = await ws.receive_text()
             message = json.loads(data)
             user_text = message.get("text", "")
+            if len(user_text.split()) < 4:
+                await ws.send_text(json.dumps({"type": "response", "text": "I didn't catch that. Could you say that again?"}))
+                await ws.send_text(json.dumps({"type": "status", "state": "idle"}))
+                continue
             print(f"[opensight] received: {user_text}")
 
             await ws.send_text(json.dumps({"type": "status", "state": "thinking"}))
@@ -84,14 +88,13 @@ async def websocket_endpoint(ws: WebSocket):
                     final_response = all_responses[0]
                 else:
                     combine_prompt = f"""
-                    A user asked: "{user_text}"
-                    
-                    These tasks were completed in sequence:
-                    {chr(10).join([f"Step {i+1}: {r}" for i, r in enumerate(all_responses)])}
-                    
-                    Combine these into one natural, spoken-friendly response.
-                    Keep it concise — it will be read aloud.
-                    """
+                A user asked: "{user_text}"
+
+                These tasks were completed:
+                {chr(10).join([f"Step {i+1}: {r}" for i, r in enumerate(all_responses)])}
+
+                Summarize in 2-3 SHORT sentences max. spoken out loud. No lists, no bullet points.
+                """
                     combined = client.models.generate_content(
                         model="gemini-2.5-flash",
                         contents=combine_prompt

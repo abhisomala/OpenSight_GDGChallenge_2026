@@ -33,9 +33,9 @@ def _run_shopping_sync(query: str) -> str:
         browser.close()
 
         if not results:
-            return f"I searched Amazon for {query} but couldn't find clear results. Try rephrasing."
+            return f"I couldn't find results for {query} on Amazon."
 
-        response = f"Here are the top {len(results)} results for {query} on Amazon. "
+        response = f"Here are the top {len(results)} results. "
         for i, r in enumerate(results, 1):
             response += f"Option {i}: {r}. "
         return response
