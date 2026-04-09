@@ -24,6 +24,8 @@ SAMPLE_RATE = 48000
 
 
 class LiquidGlassDisplay:
+    AGENT_ORDER = ["BRAIN", "SHOPPING", "CALENDAR", "RESEARCH", "GENERAL"]
+
     def __init__(self, root: tk.Tk) -> None:
         self.root = root
         self.listening = False
@@ -46,13 +48,13 @@ class LiquidGlassDisplay:
         self.max_transcript_lines = 6
         self.agent_ws_url = "ws://127.0.0.1:8080/ws"
         self.agent_enabled = websockets is not None
-        self.agent_state = "idle"
+        self.agent_focus = "IDLE"
+        self.agent_phase = "idle"
 
         self.orb_cx = 0
         self.orb_cy = 0
         self.orb_r = 0
 
-        # log mic on startup
         try:
             default_input_device = sd.default.device[0]
             info = sd.query_devices(default_input_device, "input")
@@ -65,8 +67,9 @@ class LiquidGlassDisplay:
             print(f"[mic] Default input device error: {e}, falling back to library default")
 
         self.root.title("OpenSight")
-        self.root.geometry("1200x800")
-        self.root.minsize(900, 600)
+        self.root.geometry("1024x360")
+        self.root.minsize(1024, 360)
+        self.root.resizable(False, False)
         self.root.configure(bg="#0b1826")
 
         try:
@@ -96,6 +99,10 @@ class LiquidGlassDisplay:
         h = self.bg_canvas.winfo_height()
         self.bg_canvas.delete("all")
 
+        rail_w = max(224, min(252, int(w * 0.24)))
+        rail_x = max(0, w - rail_w)
+        main_w = max(320, rail_x)
+
         top = (229, 245, 255)
         bottom = (163, 209, 235)
         for i in range(h):
@@ -105,9 +112,14 @@ class LiquidGlassDisplay:
             b = int(top[2] + (bottom[2] - top[2]) * t)
             self.bg_canvas.create_line(0, i, w, i, fill=f"#{r:02x}{g:02x}{b:02x}")
 
-        orb_r = max(24, min(36, w // 36))
-        cx = w // 2
-        cy = int(h * 0.46)
+        self.bg_canvas.create_rectangle(rail_x, 0, w, h, fill="#edf3f7", outline="")
+        self.bg_canvas.create_line(rail_x, 0, rail_x, h, fill="#b7c9d6", width=2)
+
+        self._draw_agent_rail(rail_x, 0, w, h)
+
+        orb_r = max(24, min(36, main_w // 28))
+        cx = max(180, int(main_w * 0.50))
+        cy = int(h * 0.40)
         self.orb_cx, self.orb_cy, self.orb_r = cx, cy, orb_r
 
         if self.listening:
@@ -128,8 +140,6 @@ class LiquidGlassDisplay:
 
         status = "LISTENING" if self.listening else "IDLE"
         self.bg_canvas.create_text(cx, cy + orb_r + 24, text=status, fill="#4d7390", font=("SF Mono", 10, "bold"))
-        agent_text = f"AGENT: {self.agent_state.upper()}" if self.agent_enabled else "AGENT: OFFLINE"
-        self.bg_canvas.create_text(cx, cy + orb_r + 40, text=agent_text, fill="#4d7390", font=("SF Mono", 9))
 
         transcript_title_y = cy + orb_r + 58
         self.bg_canvas.create_text(cx, transcript_title_y, text="TRANSCRIPT", fill="#4d7390", font=("SF Mono", 9, "bold"))
@@ -142,7 +152,7 @@ class LiquidGlassDisplay:
             text=transcript_text,
             fill="#2e5c7a" if self.transcript_history else "#5c86a1",
             font=("SF Mono", 11),
-            width=int(w * 0.75),
+            width=max(260, int(main_w * 0.78)),
             justify="center",
             anchor="n",
         )
@@ -153,6 +163,121 @@ class LiquidGlassDisplay:
         self.bg_canvas.create_arc(cx - 12, cy - 7, cx + 12, cy + 9, start=200, extent=140, style="arc", outline=color, width=2)
         self.bg_canvas.create_line(cx, cy + 14, cx, cy + 21, fill=color, width=2)
         self.bg_canvas.create_line(cx - 7, cy + 21, cx + 7, cy + 21, fill=color, width=2)
+
+    def _draw_agent_rail(self, rail_x: int, y1: int, w: int, h: int) -> None:
+        self.bg_canvas.create_text(
+            rail_x + 18,
+            18,
+            text="BRAIN / AGENTS",
+            fill="#507088",
+            font=("SF Mono", 9, "bold"),
+            anchor="nw",
+        )
+
+        card_left = rail_x + 14
+        card_right = w - 14
+        card_w = card_right - card_left
+        card_h = 40
+        gap = 8
+        start_y = 42
+
+        for index, agent in enumerate(self.AGENT_ORDER):
+            y_top = start_y + index * (card_h + gap)
+            y_bottom = y_top + card_h
+            active = agent == self.agent_focus
+            detail = self._agent_detail(agent)
+            fill, outline, title_color, detail_color, accent = self._agent_card_colors(agent, active)
+
+            if active:
+                self._rounded_rect(
+                    card_left + 2,
+                    y_top + 3,
+                    card_right + 2,
+                    y_bottom + 3,
+                    radius=12,
+                    fill="#cfdbe6",
+                    outline="",
+                )
+
+            self._rounded_rect(
+                card_left,
+                y_top,
+                card_right,
+                y_bottom,
+                radius=12,
+                fill=fill,
+                outline=outline,
+                width=1,
+            )
+
+            dot_r = 4 if not active else 5 + (self.pulse_step % 4)
+            dot_x = card_left + 16
+            dot_y = y_top + 18
+            self.bg_canvas.create_oval(dot_x - dot_r, dot_y - dot_r, dot_x + dot_r, dot_y + dot_r, fill=accent, outline="")
+            self.bg_canvas.create_text(
+                card_left + 32,
+                y_top + 8,
+                text=agent,
+                fill=title_color,
+                font=("SF Mono", 10, "bold"),
+                anchor="nw",
+            )
+            self.bg_canvas.create_text(
+                card_left + 32,
+                y_top + 23,
+                text=detail,
+                fill=detail_color,
+                font=("SF Mono", 8),
+                anchor="nw",
+            )
+
+    def _agent_detail(self, agent: str) -> str:
+        return {
+            "BRAIN": "routing the request",
+            "SHOPPING": "scanning options",
+            "CALENDAR": "checking schedules",
+            "RESEARCH": "pulling sources",
+            "GENERAL": "composing response",
+        }.get(agent, "idle")
+
+    def _rounded_rect(
+        self,
+        x1: int,
+        y1: int,
+        x2: int,
+        y2: int,
+        radius: int,
+        *,
+        fill: str,
+        outline: str,
+        width: int = 1,
+    ) -> None:
+        points = [
+            x1 + radius, y1,
+            x2 - radius, y1,
+            x2, y1,
+            x2, y1 + radius,
+            x2, y2 - radius,
+            x2, y2,
+            x2 - radius, y2,
+            x1 + radius, y2,
+            x1, y2,
+            x1, y2 - radius,
+            x1, y1 + radius,
+            x1, y1,
+        ]
+        self.bg_canvas.create_polygon(points, smooth=True, splinesteps=24, fill=fill, outline=outline, width=width)
+
+    def _agent_card_colors(self, agent: str, active: bool) -> tuple[str, str, str, str, str]:
+        palette = {
+            "BRAIN": ("#d8ecff", "#7cb7e6", "#214f67", "#4f7488", "#49a1e6"),
+            "SHOPPING": ("#e2f5ea", "#89cfa0", "#265a3d", "#587569", "#56b97a"),
+            "CALENDAR": ("#fff0d6", "#e3b15a", "#705117", "#8c7854", "#e0a238"),
+            "RESEARCH": ("#e7e0ff", "#b19ae8", "#4f3e7d", "#72688f", "#8b6be8"),
+            "GENERAL": ("#e3edf4", "#9eb4c4", "#334a5d", "#63798a", "#7aa7c2"),
+        }
+        inactive = ("#edf1f4", "#c8d3dc", "#6d7f8d", "#8a99a5", "#a7b4bf")
+        return palette.get(agent, inactive) if active else inactive
 
     # ── listening ──
 
@@ -168,9 +293,10 @@ class LiquidGlassDisplay:
 
         if self.listening:
             self.stop_event.clear()
-            self.is_speaking = False  # fix: reset stuck speaking state
-            self.suppress_until = 0.0  # fix: reset suppression
-            self.agent_state = "listening"
+            self.is_speaking = False
+            self.suppress_until = 0.0
+            self.agent_focus = "BRAIN"
+            self.agent_phase = "listening"
             current_session = self.session_token
             self.listen_thread = threading.Thread(
                 target=self._run_deepgram_loop,
@@ -181,13 +307,33 @@ class LiquidGlassDisplay:
             self._start_pulse_loop()
         else:
             self.stop_event.set()
-            self.agent_state = "idle"
+            self.agent_focus = "IDLE"
+            self.agent_phase = "idle"
             self._stop_pulse_loop()
 
         self.redraw()
 
     def _run_deepgram_loop(self, session_token: int) -> None:
-        asyncio.run(self._deepgram_listen(session_token))
+        asyncio.run(self._deepgram_retry(session_token))
+
+    async def _deepgram_retry(self, session_token: int) -> None:
+        retries = 0
+        max_retries = 5
+        while not self.stop_event.is_set() and session_token == self.session_token:
+            try:
+                await self._deepgram_listen(session_token)
+            except Exception as e:
+                print(f"[deepgram] error: {e}")
+            if self.stop_event.is_set() or session_token != self.session_token:
+                break
+            retries += 1
+            if retries > max_retries:
+                self._safe_after(0, self._append_transcript, "[Deepgram: too many retries, stopping]")
+                break
+            wait = min(2 ** retries, 30)
+            print(f"[deepgram] retrying in {wait}s (attempt {retries}/{max_retries})")
+            self._safe_after(0, self._append_transcript, f"[Reconnecting in {wait}s...]")
+            await asyncio.sleep(wait)
 
     async def _deepgram_listen(self, session_token: int) -> None:
         api_key = os.getenv("DEEPGRAM_API_KEY")
@@ -213,7 +359,7 @@ class LiquidGlassDisplay:
             async with websockets.connect(
                 url,
                 additional_headers=headers,
-                ping_interval=None,  # fix: let Deepgram manage keepalive
+                ping_interval=None,
             ) as ws:
                 self._safe_after(0, self._append_transcript, "[Deepgram connected — speak now]")
                 loop = asyncio.get_running_loop()
@@ -241,7 +387,7 @@ class LiquidGlassDisplay:
                     now = time.monotonic()
                     if now < self.suppress_until:
                         remaining = self.suppress_until - now
-                        if remaining > 0.05:  # only log if meaningfully suppressed
+                        if remaining > 0.05:
                             print(f"[mic] suppressed for {remaining:.2f}s")
                         return
                     frame = bytes(indata)
@@ -259,7 +405,7 @@ class LiquidGlassDisplay:
 
                 stream = sd.InputStream(
                     samplerate=self.sample_rate,
-                    blocksize=4800,  # 100ms at 48kHz
+                    blocksize=4800,
                     dtype="int16",
                     channels=1,
                     callback=audio_callback,
@@ -370,7 +516,7 @@ class LiquidGlassDisplay:
             return ""
 
     async def _query_agent_response_async(self, user_text: str, session_token: int) -> str:
-        self._safe_after(0, self._set_agent_state, "thinking")
+        self._safe_after(0, self._set_agent_status, "BRAIN", "thinking", "routing")
         try:
             async with websockets.connect(self.agent_ws_url, open_timeout=5, close_timeout=1) as ws:
                 await ws.send(json.dumps({"text": user_text}))
@@ -384,24 +530,71 @@ class LiquidGlassDisplay:
                     msg_type = payload.get("type")
 
                     if msg_type == "status":
+                        agent = str(payload.get("agent", "BRAIN")).strip() or "BRAIN"
                         state = str(payload.get("state", "thinking")).strip() or "thinking"
-                        self._safe_after(0, self._set_agent_state, state)
+                        detail = str(payload.get("detail", payload.get("label", ""))).strip()
+                        self._safe_after(0, self._set_agent_status, agent, state, detail)
                     elif msg_type == "response":
                         final_response = str(payload.get("text", "")).strip()
                         break
 
-                self._safe_after(0, self._set_agent_state, "idle")
+                self._safe_after(0, self._set_agent_status, "IDLE", "idle", "")
                 return final_response
         except Exception as e:
             print(f"[agent] ws error: {e}")
-            self._safe_after(0, self._set_agent_state, "offline")
+            self._safe_after(0, self._set_agent_status, "IDLE", "offline", "")
             return ""
+
+    def _set_agent_status(self, agent: str, state: str, detail: str = "") -> None:
+        normalized_agent = self._normalize_agent(agent)
+        normalized_state = state.strip().lower() if state else "idle"
+        changed = normalized_agent != self.agent_focus or normalized_state != self.agent_phase
+        self.agent_focus = normalized_agent
+        self.agent_phase = normalized_state
+        if changed:
+            self.redraw()
 
     def _set_agent_state(self, state: str) -> None:
         normalized = state.strip().lower() if state else "idle"
-        if normalized != self.agent_state:
-            self.agent_state = normalized
-            self.redraw()
+        if normalized == "idle":
+            self._set_agent_status("IDLE", "idle", "")
+            return
+        if normalized == "offline":
+            self._set_agent_status("IDLE", "offline", "")
+            return
+        if normalized == "thinking":
+            self._set_agent_status("BRAIN", "thinking", "routing")
+            return
+        if normalized == "listening":
+            self._set_agent_status("BRAIN", "listening", "capturing speech")
+            return
+        if normalized.startswith("step"):
+            detail = normalized.split(":", 1)[1].strip() if ":" in normalized else normalized
+            self._set_agent_status(self._agent_from_detail(detail), "thinking", detail)
+            return
+        self._set_agent_status(self._agent_from_detail(normalized), normalized, normalized)
+
+    def _normalize_agent(self, agent: str) -> str:
+        normalized = agent.strip().upper() if agent else "IDLE"
+        if normalized in {"ROUTER", "BRAIN", "PLANNER"}:
+            return "BRAIN"
+        if normalized in self.AGENT_ORDER:
+            return normalized
+        if normalized in {"IDLE", "OFFLINE"}:
+            return "IDLE"
+        return "GENERAL"
+
+    def _agent_from_detail(self, detail: str) -> str:
+        lowered = detail.lower()
+        if "amazon" in lowered or "shopping" in lowered or "product" in lowered:
+            return "SHOPPING"
+        if "calendar" in lowered or "schedule" in lowered:
+            return "CALENDAR"
+        if "research" in lowered or "paper" in lowered:
+            return "RESEARCH"
+        if "thinking" in lowered or "answer" in lowered or "general" in lowered:
+            return "GENERAL"
+        return "BRAIN"
 
     def _set_live_transcript(self, text: str) -> None:
         self.live_transcript = text.strip()
@@ -421,7 +614,7 @@ class LiquidGlassDisplay:
                 print(f"[tts] error: {e}")
             finally:
                 self.is_speaking = False
-                self.suppress_until = time.monotonic() + 0.5  # fix: reduced from 1.0 to 0.5s
+                self.suppress_until = time.monotonic() + 0.5
 
     def _speak_text(self, text: str) -> None:
         system_name = platform.system()

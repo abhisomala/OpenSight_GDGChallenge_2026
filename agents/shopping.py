@@ -33,12 +33,17 @@ def _run_shopping_sync(query: str) -> str:
         browser.close()
 
         if not results:
-            return f"I couldn't find results for {query} on Amazon."
+         return f"I couldn't find results for {query} on Amazon."
 
-        response = f"Here are the top {len(results)} results. "
+        lines = []
         for i, r in enumerate(results, 1):
-            response += f"Option {i}: {r}. "
-        return response
+            # r is "title, price, rated X stars" — just grab title and price
+            parts = r.split(", ")
+            title = parts[0][:60]  # truncate long titles
+            price = parts[1] if len(parts) > 1 else ""
+            lines.append(f"Option {i}: {title}, {price}")
+
+        return " ".join(lines)
 
 async def run_shopping_agent(query: str) -> str:
     loop = asyncio.get_event_loop()

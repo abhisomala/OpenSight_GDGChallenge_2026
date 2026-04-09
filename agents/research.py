@@ -1,6 +1,6 @@
 import os
+from agents.router import generate_with_fallback
 from serpapi import GoogleSearch
-from google import genai as genai2
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -25,7 +25,6 @@ async def run_research_agent(query: str) -> str:
         for p in papers[:5]
     ])
 
-    client = genai2.Client(api_key=os.getenv("GEMINI_API_KEY"))
     summary_prompt = f"""
     A user asked: "{query}"
     Here are academic papers on this topic:
@@ -33,8 +32,4 @@ async def run_research_agent(query: str) -> str:
 
     Give a 2-3 sentence spoken summary. Mention 1-2 paper titles max. Be concise — this will be read aloud.
     """
-    response = client.models.generate_content(
-        model="gemini-2.5-flash",
-        contents=summary_prompt
-    )
-    return response.text.strip()
+    return await generate_with_fallback(summary_prompt)

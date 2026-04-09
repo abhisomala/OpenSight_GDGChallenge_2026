@@ -5,7 +5,7 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from agents.shopping import run_shopping_agent
 from agents.calendar import run_calendar_agent
 from agents.research import run_research_agent
-from agents.router import plan_intent
+from agents.router import plan_intent, generate_with_fallback
 from google import genai
 import os
 from dotenv import load_dotenv
@@ -19,11 +19,22 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 app = FastAPI()
 
 AGENT_LABELS = {
+    "BRAIN": "routing",
     "SHOPPING": "searching Amazon",
     "CALENDAR": "checking your calendar",
     "RESEARCH": "searching research papers",
     "GENERAL": "thinking",
 }
+
+
+async def send_status(ws: WebSocket, agent: str, state: str, detail: str = "") -> None:
+    await ws.send_text(json.dumps({
+        "type": "status",
+        "agent": agent,
+        "state": state,
+        "detail": detail,
+    }))
+
 
 async def run_agent(intent: str, query: str) -> str:
     if intent == "SHOPPING":
@@ -33,32 +44,31 @@ async def run_agent(intent: str, query: str) -> str:
     elif intent == "RESEARCH":
         return await run_research_agent(query)
     else:
-        resp = client.models.generate_content(
-            model="gemini-2.5-flash",
-            contents=f"Answer in 2 sentences max, conversationally: {query}"
-        )
-        return resp.text.strip()
+        return await generate_with_fallback(f"Answer in 2 sentences max, conversationally: {query}")
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     print("[opensight] client connected")
+    conversation_history = []  # moved outside the loop
 
     try:
         while True:
             data = await ws.receive_text()
             message = json.loads(data)
             user_text = message.get("text", "")
+
             if len(user_text.split()) < 4:
                 await ws.send_text(json.dumps({"type": "response", "text": "I didn't catch that. Could you say that again?"}))
-                await ws.send_text(json.dumps({"type": "status", "state": "idle"}))
+                await send_status(ws, "IDLE", "idle")
                 continue
-            print(f"[opensight] received: {user_text}")
 
-            await ws.send_text(json.dumps({"type": "status", "state": "thinking"}))
+            print(f"[opensight] received: {user_text}")
+            await send_status(ws, "BRAIN", "thinking", "routing")
 
             try:
-                steps = await plan_intent(user_text)
+                steps = await plan_intent(user_text, conversation_history)
                 print(f"[opensight] plan: {steps}")
 
                 all_responses = []
@@ -68,38 +78,27 @@ async def websocket_endpoint(ws: WebSocket):
                     intent = step.get("intent", "GENERAL")
                     query = step.get("query", user_text)
 
-                    # inject previous result if placeholder present
                     if "{{PREVIOUS_RESULT}}" in query and previous_result:
                         query = query.replace("{{PREVIOUS_RESULT}}", previous_result)
 
                     label = AGENT_LABELS.get(intent, "thinking")
-                    await ws.send_text(json.dumps({
-                        "type": "status",
-                        "state": f"Step {i+1}/{len(steps)}: {label}"
-                    }))
+                    await send_status(ws, intent if intent in AGENT_LABELS else "GENERAL", "thinking", label)
 
                     print(f"[opensight] step {i+1}: {intent} | query: {query}")
                     result = await run_agent(intent, query)
                     all_responses.append(result)
                     previous_result = result
 
-                # combine all responses naturally if multiple steps
                 if len(all_responses) == 1:
                     final_response = all_responses[0]
                 else:
                     combine_prompt = f"""
-                A user asked: "{user_text}"
-
-                These tasks were completed:
-                {chr(10).join([f"Step {i+1}: {r}" for i, r in enumerate(all_responses)])}
-
-                Summarize in 2-3 SHORT sentences max. spoken out loud. No lists, no bullet points.
-                """
-                    combined = client.models.generate_content(
-                        model="gemini-2.5-flash",
-                        contents=combine_prompt
-                    )
-                    final_response = combined.text.strip()
+                    A user asked: "{user_text}"
+                    These tasks were completed:
+                    {chr(10).join([f"Step {i+1}: {r}" for i, r in enumerate(all_responses)])}
+                    Summarize in 2-3 SHORT sentences max. spoken out loud. No lists, no bullet points.
+                    """
+                    final_response = await generate_with_fallback(combine_prompt)
 
             except Exception as e:
                 import traceback
@@ -107,8 +106,12 @@ async def websocket_endpoint(ws: WebSocket):
                 final_response = f"Sorry, I ran into an issue: {str(e)}"
                 print(f"[opensight] error: {e}")
 
+            conversation_history.append({"user": user_text, "assistant": final_response})
+            if len(conversation_history) > 3:
+                conversation_history.pop(0)
+
             await ws.send_text(json.dumps({"type": "response", "text": final_response}))
-            await ws.send_text(json.dumps({"type": "status", "state": "idle"}))
+            await send_status(ws, "IDLE", "idle")
 
     except WebSocketDisconnect:
         print("[opensight] client disconnected")

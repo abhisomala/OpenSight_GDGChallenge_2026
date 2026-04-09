@@ -1,10 +1,15 @@
 import os
 import datetime
+import json
+import re
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
-from google import genai
+from agents.router import generate_with_fallback
+from dotenv import load_dotenv
+
+load_dotenv()
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
 
@@ -23,8 +28,6 @@ def get_calendar_service():
     return build('calendar', 'v3', credentials=creds)
 
 async def run_calendar_agent(query: str) -> str:
-    # Use Gemini to parse the event details from natural language
-    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
     parse_prompt = f"""
     Extract calendar event details from this request: "{query}"
     Respond ONLY with JSON:
@@ -37,12 +40,7 @@ async def run_calendar_agent(query: str) -> str:
     }}
     Use today's date as reference: {datetime.date.today()}
     """
-    resp = client.models.generate_content(
-    model="gemini-2.5-flash",
-    contents=parse_prompt
-    )
-    import json, re
-    raw = re.sub(r"```json|```", "", resp.text.strip()).strip()
+    raw = re.sub(r"```json|```", "", await generate_with_fallback(parse_prompt)).strip()
     details = json.loads(raw)
 
     service = get_calendar_service()
@@ -58,10 +56,10 @@ async def run_calendar_agent(query: str) -> str:
             'start': {'dateTime': start_dt.isoformat(), 'timeZone': 'America/New_York'},
             'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'America/New_York'},
         }
-        created = service.events().insert(calendarId='primary', body=event).execute()
+        service.events().insert(calendarId='primary', body=event).execute()
         return f"Done! I've created '{details.get('title')}' on {details['date']} at {details.get('time', '9 AM')} in your Google Calendar."
 
-    else:  # list upcoming
+    else:
         now = datetime.datetime.utcnow().isoformat() + 'Z'
         events_result = service.events().list(
             calendarId='primary', timeMin=now, maxResults=5,
