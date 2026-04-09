@@ -617,9 +617,25 @@ class LiquidGlassDisplay:
                 self.suppress_until = time.monotonic() + 0.5
 
     def _speak_text(self, text: str) -> None:
+        api_key = os.getenv("ELEVENLABS_API_KEY")
+        if api_key:
+            try:
+                from elevenlabs.client import ElevenLabs
+                from elevenlabs import stream
+                el_client = ElevenLabs(api_key=api_key)
+                audio = el_client.text_to_speech.convert(
+                    voice_id="onwK4e9ZLuTAKqWW03F9",
+                    text=text,
+                    model_id="eleven_turbo_v2",
+                )
+                stream(audio)
+                return
+            except Exception as e:
+                print(f"[tts] ElevenLabs error: {e}, falling back")
+
         system_name = platform.system()
         if system_name == "Darwin":
-            subprocess.run(["say", "-v", "Samantha", text], check=False)
+            subprocess.run(["say", "-v", "Ava", "-r", "175", text], check=False)
         elif system_name == "Windows":
             safe = text.replace("'", "''")
             cmd = (
@@ -630,7 +646,6 @@ class LiquidGlassDisplay:
             subprocess.run(["powershell", "-Command", cmd], check=False)
         else:
             subprocess.run(["espeak", text], check=False)
-
     # ── helpers ──
 
     def _safe_after(self, delay_ms: int, callback, *args, **kwargs) -> None:
