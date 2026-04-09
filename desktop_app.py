@@ -1,6 +1,7 @@
 import math
 import os
 import threading
+import time
 import tkinter as tk
 from dotenv import load_dotenv
 
@@ -31,7 +32,7 @@ class LiquidGlassDisplay:
         )
         self.voice_thread.start()
 
-        self.root.title("OpenSight")
+        self.root.title("OpenSight - Technology that Adapts to You.")
         self.root.geometry("720x360")
         self.root.minsize(720, 360)
         self.root.resizable(False, False)
@@ -108,9 +109,9 @@ class LiquidGlassDisplay:
 
         stack_cx = max(180, int(main_w * 0.50))
         text_w = max(260, int(main_w * 0.78))
-        top_zone_y = int(h * 0.20)
-        divider_y = int(h * 0.48)
-        bottom_zone_y = int(h * 0.68)
+        top_zone_y = int(h * 0.18)
+        divider_y = int(h * 0.45)
+        bottom_zone_y = int(h * 0.62)
 
         self.bg_canvas.create_text(stack_cx, top_zone_y - 22, text="YOU",
                                     fill="#7aa5bc", font=("SF Mono", 8, "bold"), anchor="center")
@@ -119,7 +120,7 @@ class LiquidGlassDisplay:
         )
         self.bg_canvas.create_text(stack_cx, top_zone_y, text=user_display,
                                     fill="#2b5d79" if (s.live_transcript or s.last_user_text) else "#6a8ba2",
-                                    font=("SF Mono", 15), width=text_w, justify="center", anchor="center")
+                                    font=("SF Mono", 12), width=text_w, justify="center", anchor="center")
 
         self.bg_canvas.create_line(stack_cx - 120, divider_y, stack_cx + 120, divider_y,
                                     fill="#a8c4d4", width=1, dash=(4, 4))
@@ -129,7 +130,7 @@ class LiquidGlassDisplay:
         ai_display = s.last_ai_text if s.last_ai_text else "Response will appear here..."
         self.bg_canvas.create_text(stack_cx, bottom_zone_y, text=ai_display,
                                     fill="#1a4a62" if s.last_ai_text else "#6a8ba2",
-                                    font=("SF Mono", 15), width=text_w, justify="center", anchor="center")
+                                    font=("SF Mono", 12), width=text_w, justify="center", anchor="center")
 
     def _draw_mic_icon(self, cx: int, cy: int, color: str) -> None:
         self.bg_canvas.create_oval(cx - 9, cy - 14, cx + 9, cy + 4, fill=color, outline="")
@@ -243,6 +244,17 @@ class LiquidGlassDisplay:
 
     def _apply_final_transcript(self, transcript: str) -> None:
         s = self.state
+
+        normalized = " ".join(transcript.lower().split())
+        now = time.monotonic()
+        if normalized == s.last_final_norm and (now - s.last_final_ts) < 0.3:
+            return
+        s.last_final_norm = normalized
+        s.last_final_ts = now
+
+        if s.agent_request_in_flight:
+            return
+
         s.last_user_text = transcript
         s.live_transcript = ""
         s.transcript_history.append(f"You: {transcript}")

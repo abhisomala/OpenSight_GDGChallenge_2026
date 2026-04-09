@@ -73,7 +73,9 @@ async def _deepgram_listen(state, session_token, on_final_cb, on_interim_cb, web
             def audio_callback(indata, frames, t, status):
                 if not ws_alive or state.stop_event.is_set():
                     return
-                if session_token != state.session_token or state.is_speaking:
+                if session_token != state.session_token:
+                    return
+                if state.is_speaking:
                     return
                 if time.monotonic() < state.suppress_until:
                     return
@@ -150,53 +152,20 @@ def speak_text(state, text: str):
     import platform
     import subprocess
 
-    state.barge_in_event.clear()
     api_key = os.getenv("ELEVENLABS_API_KEY")
 
     if api_key:
         try:
             from elevenlabs.client import ElevenLabs
-            import pyaudio
-            import numpy as np
+            from elevenlabs import stream as el_stream
 
             el_client = ElevenLabs(api_key=api_key)
-            audio_stream = el_client.text_to_speech.convert(
+            audio = el_client.text_to_speech.convert(
                 voice_id="onwK4e9ZLuTAKqWW03F9",
                 text=text,
                 model_id="eleven_turbo_v2",
             )
-
-            pa = pyaudio.PyAudio()
-            out_stream = pa.open(format=pyaudio.paInt16, channels=1, rate=22050, output=True)
-
-            def monitor_mic():
-                try:
-                    mic = pa.open(format=pyaudio.paInt16, channels=1, rate=16000,
-                                  input=True, frames_per_buffer=1024)
-                    while not state.barge_in_event.is_set():
-                        data = mic.read(1024, exception_on_overflow=False)
-                        level = abs(np.frombuffer(data, dtype=np.int16)).mean()
-                        if level > 800:
-                            print(f"[barge-in] detected level {level:.0f}")
-                            state.barge_in_event.set()
-                            break
-                    mic.stop_stream()
-                    mic.close()
-                except Exception as e:
-                    print(f"[barge-in] mic error: {e}")
-
-            threading.Thread(target=monitor_mic, daemon=True).start()
-
-            for chunk in audio_stream:
-                if state.barge_in_event.is_set():
-                    print("[barge-in] stopping playback")
-                    break
-                if chunk:
-                    out_stream.write(chunk)
-
-            out_stream.stop_stream()
-            out_stream.close()
-            pa.terminate()
+            el_stream(audio)
             return
         except Exception as e:
             print(f"[tts] ElevenLabs error: {e}, falling back")

@@ -16,12 +16,21 @@ def process_recognized_text(state, text: str, session_token: int, on_response_cb
         state.voice_queue.put(text)
         return
 
-    response = query_agent_response(state, text, session_token, safe_after_cb)
-    if session_token != state.session_token:
-        return
-    if response:
-        safe_after_cb(0, on_response_cb, response)
-        state.voice_queue.put(response)
+    with state.agent_lock:
+        if state.agent_request_in_flight:
+            return
+        state.agent_request_in_flight = True
+
+    try:
+        response = query_agent_response(state, text, session_token, safe_after_cb)
+        if session_token != state.session_token:
+            return
+        if response:
+            safe_after_cb(0, on_response_cb, response)
+            state.voice_queue.put(response)
+    finally:
+        with state.agent_lock:
+            state.agent_request_in_flight = False
 
 
 def query_agent_response(state, user_text: str, session_token: int, safe_after_cb) -> str:

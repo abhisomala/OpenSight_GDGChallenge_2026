@@ -8,11 +8,14 @@ class AppState:
         self.shutdown_event = threading.Event()
         self.session_token = 0
         self.pulse_step = 0
+        self.last_final_norm = ""
+        self.last_final_ts = 0.0
+        self.agent_request_in_flight = False
+        self.agent_lock = threading.Lock()
 
         self.voice_queue: queue.Queue[str | None] = queue.Queue()
 
         self.is_speaking = False
-        self.barge_in_event = threading.Event()
         self.suppress_until = 0.0
         self.sample_rate = 48000
 
