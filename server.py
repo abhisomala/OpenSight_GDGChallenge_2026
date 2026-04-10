@@ -5,8 +5,10 @@ from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from agents.shopping import run_shopping_agent
 from agents.calendar import run_calendar_agent
 from agents.research import run_research_agent
+from agents.general import run_general_agent
 from agents.router import plan_intent, generate_with_fallback
-from google import genai
+from agents.shopping import close_active_browser as close_shopping_browser
+from agents.research import close_active_browser as close_research_browser
 import os
 from dotenv import load_dotenv
 
@@ -14,7 +16,6 @@ if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
 load_dotenv()
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 app = FastAPI()
 
@@ -27,15 +28,18 @@ AGENT_LABELS = {
 }
 
 
+def close_all_browsers():
+    close_shopping_browser()
+    close_research_browser()
+
+
 def _is_short_actionable_text(text: str, shopping_memory: dict) -> bool:
     t = (text or "").strip().lower()
     if not t:
         return False
-
     has_options = bool((shopping_memory or {}).get("last_results"))
     if not has_options:
         return False
-
     return any([
         "option" in t,
         any(word in t for word in ["first", "second", "third", "1st", "2nd", "3rd"]),
@@ -54,24 +58,29 @@ async def send_status(ws: WebSocket, agent: str, state: str, detail: str = "") -
     }))
 
 
-async def run_agent(intent: str, query: str, shopping_memory: dict | None = None) -> tuple[str, dict | None]:
+async def run_agent(intent: str, query: str, history: list, shopping_memory: dict, last_intent: str = "") -> tuple[str, dict | None]:
+    if last_intent and intent != last_intent:
+        close_all_browsers()
     if intent == "SHOPPING":
-        result_text, memory_update = await run_shopping_agent(query, shopping_memory)
-        return result_text, memory_update
+        result = await run_shopping_agent(query, shopping_memory)
+        if isinstance(result, tuple):
+            return result
+        return result, None
     elif intent == "CALENDAR":
         return await run_calendar_agent(query), None
     elif intent == "RESEARCH":
-        return await run_research_agent(query), None
+        return await run_research_agent(query, history), None
     else:
-        return await generate_with_fallback(f"Answer in 2 sentences max, conversationally: {query}"), None
+        return await run_general_agent(query, history), None
 
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     print("[opensight] client connected")
-    conversation_history = []  # moved outside the loop
+    conversation_history = []
     shopping_memory = {"last_query": "", "last_results": []}
+    last_intent = ""
 
     try:
         while True:
@@ -88,7 +97,7 @@ async def websocket_endpoint(ws: WebSocket):
             await send_status(ws, "BRAIN", "thinking", "routing")
 
             try:
-                steps = await plan_intent(user_text, conversation_history, shopping_memory)
+                steps = await plan_intent(user_text, conversation_history)
                 print(f"[opensight] plan: {steps}")
 
                 all_responses = []
@@ -105,22 +114,21 @@ async def websocket_endpoint(ws: WebSocket):
                     await send_status(ws, intent if intent in AGENT_LABELS else "GENERAL", "thinking", label)
 
                     print(f"[opensight] step {i+1}: {intent} | query: {query}")
-                    result, memory_update = await run_agent(intent, query, shopping_memory)
+                    result, memory_update = await run_agent(intent, query, conversation_history, shopping_memory, last_intent)
+                    last_intent = intent
                     all_responses.append(result)
                     previous_result = result
 
                     if intent == "SHOPPING" and memory_update is not None:
-                        shopping_memory = memory_update
+                        shopping_memory.update(memory_update)
 
                 if len(all_responses) == 1:
                     final_response = all_responses[0]
                 else:
                     combine_prompt = f"""
-                    A user asked: "{user_text}"
-                    These tasks were completed:
-                    {chr(10).join([f"Step {i+1}: {r}" for i, r in enumerate(all_responses)])}
-                    Summarize in 2-3 SHORT sentences max. spoken out loud. No lists, no bullet points.
-                    """
+Combine these into one 2-sentence spoken response. No filler. No lists.
+{chr(10).join([f"{r}" for r in all_responses])}
+"""
                     final_response = await generate_with_fallback(combine_prompt)
 
             except Exception as e:

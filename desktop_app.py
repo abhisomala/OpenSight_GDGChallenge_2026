@@ -116,50 +116,51 @@ class LiquidGlassDisplay:
         self.bg_canvas.create_text(cx, cy - orb_r - 18, text=status, fill="#4d7390", font=("SF Mono", 11, "bold"))
 
         stack_cx = max(180, int(main_w * 0.50))
-        text_w = max(260, int(main_w * 0.78))
-        top_zone_y = int(h * 0.18)
-        divider_y = int(h * 0.45)
-        bottom_zone_y = int(h * 0.62)
+        ai_text_w = max(320, int(main_w * 0.86))
+        user_text_w = max(200, int(main_w * 0.56))
+        top_zone_y = int(h * 0.13)
+        divider_y = int(h * 0.27)
+        bottom_zone_y = int(h * 0.39)
 
-        self.bg_canvas.create_text(stack_cx, top_zone_y - 22, text="OPENSIGHT",
+        self.bg_canvas.create_text(stack_cx, top_zone_y - 22, text="YOU",
+                                    fill="#7aa5bc", font=("SF Mono", 8, "bold"), anchor="center")
+        user_display = s.live_transcript if s.live_transcript else (
+            s.last_user_text if s.last_user_text else "Speak and your words will appear here..."
+        )
+        self.bg_canvas.create_text(stack_cx, top_zone_y, text=user_display,
+                                    fill="#2b5d79" if (s.live_transcript or s.last_user_text) else "#6a8ba2",
+                                    font=("SF Mono", 12), width=user_text_w, justify="center", anchor="center")
+
+        self.bg_canvas.create_line(stack_cx - 120, divider_y, stack_cx + 120, divider_y,
+                                    fill="#a8c4d4", width=1, dash=(4, 4))
+
+        self.bg_canvas.create_text(stack_cx, bottom_zone_y - 22, text="OPENSIGHT",
                                     fill="#7aa5bc", font=("SF Mono", 8, "bold"), anchor="center")
         ai_display = self.ai_render_text if self.ai_render_text else "Response will appear here..."
         if self.ai_render_text:
-            ai_x = stack_cx - (text_w // 2)
-            ai_y = top_zone_y - 8
+            ai_x = stack_cx - (ai_text_w // 2)
+            ai_y = bottom_zone_y - 8
             self.bg_canvas.create_text(
                 ai_x,
                 ai_y,
                 text=ai_display,
                 fill="#1a4a62",
                 font=("SF Mono", 12),
-                width=text_w,
+                width=ai_text_w,
                 justify="left",
                 anchor="nw",
             )
         else:
             self.bg_canvas.create_text(
                 stack_cx,
-                top_zone_y,
+                bottom_zone_y,
                 text=ai_display,
                 fill="#6a8ba2",
                 font=("SF Mono", 12),
-                width=text_w,
+                width=ai_text_w,
                 justify="center",
                 anchor="center",
             )
-
-        self.bg_canvas.create_line(stack_cx - 120, divider_y, stack_cx + 120, divider_y,
-                                    fill="#a8c4d4", width=1, dash=(4, 4))
-
-        self.bg_canvas.create_text(stack_cx, bottom_zone_y - 22, text="YOU",
-                                    fill="#7aa5bc", font=("SF Mono", 8, "bold"), anchor="center")
-        user_display = s.live_transcript if s.live_transcript else (
-            s.last_user_text if s.last_user_text else "Speak and your words will appear here..."
-        )
-        self.bg_canvas.create_text(stack_cx, bottom_zone_y, text=user_display,
-                                    fill="#2b5d79" if (s.live_transcript or s.last_user_text) else "#6a8ba2",
-                                    font=("SF Mono", 12), width=text_w, justify="center", anchor="center")
 
     def _draw_mic_icon(self, cx: int, cy: int, color: str) -> None:
         self.bg_canvas.create_oval(cx - 9, cy - 14, cx + 9, cy + 4, fill=color, outline="")

@@ -67,9 +67,18 @@ async def run_calendar_agent(query: str) -> str:
         ).execute()
         events = events_result.get('items', [])
         if not events:
-            return "You have no upcoming events in your calendar."
+            return "You have no upcoming events."
         response = "Here are your next events. "
         for e in events:
             start = e['start'].get('dateTime', e['start'].get('date'))
-            response += f"{e['summary']} on {start[:10]}. "
+            if 'T' in start:
+                dt = datetime.datetime.fromisoformat(start)
+                end = e['end'].get('dateTime', '')
+                end_dt = datetime.datetime.fromisoformat(end) if end and 'T' in end else None
+                formatted = dt.strftime("%B %d at %-I:%M %p")
+                if end_dt:
+                    formatted += end_dt.strftime(" to %-I:%M %p")
+            else:
+                formatted = datetime.datetime.strptime(start, "%Y-%m-%d").strftime("%B %d")
+            response += f"{e['summary']} on {formatted}. "
         return response

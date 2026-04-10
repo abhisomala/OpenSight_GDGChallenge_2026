@@ -24,8 +24,8 @@ Given a user message, determine if it requires one or multiple steps to complete
 Available agents:
 - SHOPPING: finding, comparing, buying, or searching for products on Amazon. Always preserve price constraints exactly as stated by the user (e.g. "under $800", "less than $500").
 - CALENDAR: scheduling, booking, checking or creating Google Calendar events
-- RESEARCH: finding academic papers or studies on a topic
-- GENERAL: anything else, answer conversationally
+- RESEARCH: finding academic papers or studies on a topic. Also use RESEARCH for any follow-up questions about papers that were previously mentioned, such as asking about authors, methodology, findings, or details of a specific paper.
+- GENERAL: greetings, follow-up questions, definitions, opinions, math, weather, jokes, anything that doesn't require browsing Amazon, accessing a calendar, or finding academic papers. When in doubt use GENERAL.
 
 Respond ONLY with a JSON object like this:
 
@@ -49,6 +49,25 @@ Always return valid JSON with a "steps" array. Never return anything else.
 Keep all responses under 3 sentences. Be direct and concise.
 """
 
+
+RESEARCH_FOLLOWUP_PATTERN = re.compile(
+    r"\b(author|who wrote|who made|first paper|second paper|that paper|the paper|tell me more|methodology|findings|published|journal|when was)\b",
+    re.IGNORECASE,
+)
+
+
+def _has_recent_research_context(history: list | None) -> bool:
+    if not history:
+        return False
+    for turn in history[-3:]:
+        assistant_text = str(turn.get("assistant", "")).lower()
+        if any(phrase in assistant_text for phrase in [
+            "research", "paper", "study", "journal", "published", "authors"
+        ]):
+            return True
+    return False
+
+
 async def generate_with_fallback(contents: str) -> str:
     for model in MODELS:
         try:
@@ -62,38 +81,19 @@ async def generate_with_fallback(contents: str) -> str:
     raise Exception("All Gemini models unavailable")
 
 
-def _looks_like_shopping_followup(user_text: str, history: list, shopping_memory: dict | None) -> bool:
-    text = (user_text or "").strip().lower()
-    if not text:
-        return False
+async def plan_intent(user_text: str, history: list | None = None) -> list:
+    history = history or []
 
-    has_recent_options = bool((shopping_memory or {}).get("last_results"))
-    if not has_recent_options:
-        # Fallback: detect recent option-style assistant response.
-        for turn in (history or []):
-            assistant = (turn.get("assistant") or "").lower()
-            if "option 1:" in assistant:
-                has_recent_options = True
+    # force RESEARCH for follow-up questions about papers
+    if _has_recent_research_context(history) and RESEARCH_FOLLOWUP_PATTERN.search(user_text):
+        # find the last research response to give context
+        last_research = ""
+        for turn in reversed(history):
+            if any(phrase in turn.get("assistant", "").lower() for phrase in ["paper", "study", "research", "journal"]):
+                last_research = turn.get("assistant", "")
                 break
-
-    if not has_recent_options:
-        return False
-
-    followup_markers = [
-        r"\boption\s*\d+\b",
-        r"\b(first|second|third|1st|2nd|3rd)\b",
-        r"\b(click|open|buy|select|choose)\b",
-        r"\b(that one|this one|the first one|the second one|the third one)\b",
-        r"\btell me more\b",
-        r"\bmore about\b",
-    ]
-    return any(re.search(pattern, text) for pattern in followup_markers)
-
-
-async def plan_intent(user_text: str, history: list | None = None, shopping_memory: dict | None = None) -> list:
-    # Deterministic override for short follow-ups like "option 2".
-    if _looks_like_shopping_followup(user_text, history or [], shopping_memory):
-        return [{"intent": "SHOPPING", "query": user_text}]
+        enriched_query = f"{user_text} [context: {last_research}]" if last_research else user_text
+        return [{"intent": "RESEARCH", "query": enriched_query}]
 
     history_text = ""
     if history:

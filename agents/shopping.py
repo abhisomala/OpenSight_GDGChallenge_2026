@@ -5,10 +5,26 @@ import time
 from typing import Optional
 from playwright.sync_api import sync_playwright
 
+_active_browser: dict | None = None
+
+
+def close_active_browser():
+    global _active_browser
+    if _active_browser:
+        _active_browser["close"] = True
+        _active_browser = None
+
 
 def _clean_query(query: str) -> str:
     cleaned = re.sub(r'\s*(on amazon|from amazon|at amazon|amazon)\s*', ' ', query, flags=re.IGNORECASE)
     return cleaned.strip()
+
+
+def _shorten_title(title: str) -> str:
+    title = re.split(r',|-|\|', title)[0].strip()
+    if len(title) > 30:
+        title = title[:30].rsplit(' ', 1)[0]
+    return title
 
 
 def _extract_budget(query: str):
@@ -59,15 +75,9 @@ def _extract_option_index(query: str, max_options: int) -> Optional[int]:
         return idx if 0 <= idx < max_options else None
 
     ordinal_map = {
-        "first": 0,
-        "1st": 0,
-        "one": 0,
-        "second": 1,
-        "2nd": 1,
-        "two": 1,
-        "third": 2,
-        "3rd": 2,
-        "three": 2,
+        "first": 0, "1st": 0, "one": 0,
+        "second": 1, "2nd": 1, "two": 1,
+        "third": 2, "3rd": 2, "three": 2,
     }
     for word, idx in ordinal_map.items():
         if re.search(rf'\b{re.escape(word)}\b', text):
@@ -87,7 +97,6 @@ def _open_product_page(url: str) -> None:
             page = context.new_page()
             page.goto(url)
             page.wait_for_load_state("domcontentloaded")
-            # Keep it open briefly so the user can see the page.
             page.wait_for_timeout(15000)
             browser.close()
     except Exception as e:
@@ -97,29 +106,26 @@ def _open_product_page(url: str) -> None:
 def _handle_followup_query(query: str, shopping_memory: dict) -> str:
     results = shopping_memory.get("last_results") or []
     if not results:
-        return "I don't have recent shopping options yet. Ask me to search Amazon first."
+        return "I don't have any options saved yet. Want me to search Amazon?"
 
     idx = _extract_option_index(query, len(results))
     text = (query or "").lower()
 
-    if "repeat" in text and "option" in text:
-        parts = [f"Option {i + 1}: {r['title']}, {r['price']}" for i, r in enumerate(results)]
-        return "Here are the options again. " + ". ".join(parts) + "."
+    if "repeat" in text:
+        parts = [f"{i+1}: {_shorten_title(r['title'])} for {r['price']}" for i, r in enumerate(results)]
+        return " ".join(parts)
 
     if idx is None:
-        if len(results) == 1:
-            idx = 0
-        else:
-            return "I can do that. Which option number do you want?"
+        return "Which one — the first, second, or third?"
 
     selected = results[idx]
     if _is_open_intent(query):
         if selected.get("url"):
             threading.Thread(target=_open_product_page, args=(selected["url"],), daemon=True).start()
-            return f"Opening option {idx + 1}: {selected['title']} at {selected['price']}."
-        return f"I found option {idx + 1}, {selected['title']} at {selected['price']}, but I could not open its product link."
+            return f"Opening the {_shorten_title(selected['title'])}."
+        return "I can't find a direct link for that one."
 
-    return f"Option {idx + 1} is {selected['title']} at {selected['price']}. Want me to open it?"
+    return f"That's the {_shorten_title(selected['title'])}, going for {selected['price']}. Want me to open it?"
 
 
 def _open_amazon_browser(query: str, result_holder: dict) -> None:
@@ -153,7 +159,9 @@ def _open_amazon_browser(query: str, result_holder: dict) -> None:
                     price = price_el.inner_text() if price_el else ""
 
                     title_lower = title.lower()
-                    if any(skip in title_lower for skip in ["case", "cover", "screen protector", "keyboard cover", "sleeve", "bag"]):
+                    if any(skip in title_lower for skip in [
+                        "case", "cover", "screen protector", "keyboard cover", "sleeve", "bag"
+                    ]):
                         continue
 
                     if not price:
@@ -190,14 +198,37 @@ def _wait_for_done(result_holder: dict) -> None:
         time.sleep(0.2)
 
 
+def _build_response(results: list) -> str:
+    if len(results) == 1:
+        r = results[0]
+        return f"I found one — {_shorten_title(r['title'])} for {r['price']}."
+    elif len(results) == 2:
+        return (
+            f"Two options. "
+            f"{_shorten_title(results[0]['title'])} at {results[0]['price']}, "
+            f"or {_shorten_title(results[1]['title'])} at {results[1]['price']}. "
+            f"Which one?"
+        )
+    else:
+        return (
+            f"Got three options. "
+            f"{_shorten_title(results[0]['title'])} at {results[0]['price']}, "
+            f"{_shorten_title(results[1]['title'])} at {results[1]['price']}, "
+            f"or {_shorten_title(results[2]['title'])} at {results[2]['price']}. "
+            f"Which one?"
+        )
+
+
 async def run_shopping_agent(query: str, shopping_memory: dict | None = None) -> tuple[str, dict]:
+    global _active_browser
     shopping_memory = shopping_memory or {"last_query": "", "last_results": []}
 
     if _is_followup_query(query) and shopping_memory.get("last_results"):
         return _handle_followup_query(query, shopping_memory), shopping_memory
 
-    result_holder = {"done": False, "results": [], "close": False}
+    close_active_browser()
 
+    result_holder = {"done": False, "results": [], "close": False}
     thread = threading.Thread(
         target=_open_amazon_browser,
         args=(query, result_holder),
@@ -212,9 +243,8 @@ async def run_shopping_agent(query: str, shopping_memory: dict | None = None) ->
 
     if not results:
         result_holder["close"] = True
-        return f"I searched Amazon but couldn't find results for {query}.", shopping_memory
+        return "I couldn't find anything for that. Try rephrasing?", shopping_memory
 
-    # filter by budget if one was specified
     budget = _extract_budget(query)
     if budget:
         in_budget = [r for r in results if r["price_val"] and r["price_val"] <= budget]
@@ -224,43 +254,23 @@ async def run_shopping_agent(query: str, shopping_memory: dict | None = None) ->
             cheapest = min(results, key=lambda r: r["price_val"] or 9999)
             result_holder["close"] = True
             return (
-                f"I couldn't find anything under ${int(budget)}. "
-                f"The cheapest I found was the {cheapest['title']} at {cheapest['price']}."
+                f"Nothing under ${int(budget)}, sorry. "
+                f"Closest I found is the {_shorten_title(cheapest['title'])} at {cheapest['price']}."
             ), {
                 "last_query": _clean_query(query),
-                "last_results": [
-                    {
-                        "title": cheapest["title"],
-                        "price": cheapest["price"],
-                        "url": cheapest.get("url"),
-                    }
-                ],
+                "last_results": [{"title": cheapest["title"], "price": cheapest["price"], "url": cheapest.get("url")}],
             }
     else:
         results = results[:3]
 
-    # build natural spoken response
-    if len(results) == 1:
-        r = results[0]
-        response = f"I found one option — {r['title']} for {r['price']}."
-    else:
-        parts = [f"Option {i+1}: {r['title']}, {r['price']}" for i, r in enumerate(results)]
-        response = "Here's what I found. " + ". ".join(parts) + "."
+    _active_browser = result_holder
 
-    def delayed_close():
-        time.sleep(12)
-        result_holder["close"] = True
-
-    threading.Thread(target=delayed_close, daemon=True).start()
     memory_update = {
         "last_query": _clean_query(query),
         "last_results": [
-            {
-                "title": r["title"],
-                "price": r["price"],
-                "url": r.get("url"),
-            }
+            {"title": r["title"], "price": r["price"], "url": r.get("url")}
             for r in results
         ],
     }
-    return response, memory_update
+
+    return _build_response(results), memory_update
