@@ -90,10 +90,12 @@ def _open_product_page(url: str) -> None:
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=False, args=[
-                "--window-size=680,780",
-                "--window-position=720,60",
-            ])
-            context = browser.new_context(viewport={"width": 680, "height": 780})
+            "--window-size=720,900",
+            "--window-position=720,0",
+            "--no-first-run",
+            "--no-default-browser-check",
+        ])
+            context = browser.new_context(viewport={"width": 720, "height": 900})
             page = context.new_page()
             page.goto(url)
             page.wait_for_load_state("domcontentloaded")
@@ -132,9 +134,12 @@ def _open_amazon_browser(query: str, result_holder: dict) -> None:
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=False, args=[
-                "--window-size=680,780",
-                "--window-position=720,60",
+                "--window-size=720,900",
+                "--window-position=720,0",
+                "--no-first-run",
+                "--no-default-browser-check",
             ])
+            context = browser.new_context(viewport={"width": 720, "height": 900})
             context = browser.new_context(viewport={"width": 680, "height": 780})
             page = context.new_page()
 

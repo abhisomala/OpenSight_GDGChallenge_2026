@@ -25,10 +25,13 @@ def _open_scholar_browser(query: str, result_holder: dict) -> None:
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=False, args=[
-                "--window-size=680,780",
-                "--window-position=720,60",
+                "--window-size=720,900",
+                "--window-position=720,0",
+                "--no-first-run",
+                "--no-default-browser-check",
             ])
-            page = browser.new_page()
+            context = browser.new_context(viewport={"width": 720, "height": 900})
+            page = context.new_page()
             search_url = f"https://scholar.google.com/scholar?q={query.replace(' ', '+')}"
             page.goto(search_url)
             page.wait_for_load_state("domcontentloaded")
@@ -39,6 +42,23 @@ def _open_scholar_browser(query: str, result_holder: dict) -> None:
             browser.close()
     except Exception as e:
         print(f"[research] browser error: {e}")
+
+
+def _shorten_title(title: str) -> str:
+    title = title.split(':')[0].strip()
+    if len(title) > 50:
+        title = title[:50].rsplit(' ', 1)[0]
+    return title
+
+
+def _build_response(papers: list) -> str:
+    if not papers:
+        return "I couldn't find any papers on that."
+    p1 = _shorten_title(papers[0].get('title', 'Unknown'))
+    if len(papers) == 1:
+        return f"Found one paper — {p1}. Want to know more about it?"
+    p2 = _shorten_title(papers[1].get('title', 'Unknown'))
+    return f"Got two papers. First is {p1}, and second is {p2}. Want to know more about either?"
 
 
 def _is_followup(query: str) -> bool:
@@ -78,15 +98,14 @@ async def run_research_agent(query: str, history: list = []) -> str:
                 history_text += f"User: {turn['user']}\nAssistant: {turn['assistant']}\n"
 
         prompt = f"""
-You are OpenSight, a voice assistant. The user previously searched for "{research_memory['last_query']}" and these papers were found:
+You are a voice assistant. Answer conversationally in 1-2 sentences.
+No filler phrases, no bullet points, no markdown.
+Get straight to the answer using only what's relevant below.
 
+Papers on "{research_memory['last_query']}":
 {context}
 {history_text}
-
-The user is now asking: "{query}"
-
-Answer their follow-up question directly using the paper details above.
-Keep it to 2-3 sentences max, spoken naturally. No bullet points or markdown.
+User: "{query}"
 """
         return await generate_with_fallback(prompt)
 
@@ -113,29 +132,9 @@ Keep it to 2-3 sentences max, spoken naturally. No bullet points or markdown.
     papers = results.get("organic_results", [])
 
     if not papers:
-        return f"I searched Google Scholar for {query} but couldn't find results. Try being more specific."
+        return f"I couldn't find anything on {query}. Try a different search term."
 
     research_memory["last_papers"] = papers
     research_memory["last_query"] = query
 
-    context = "\n\n".join([
-        f"Title: {p.get('title')}\nSummary: {p.get('snippet', 'No summary available')}"
-        for p in papers[:5]
-    ])
-
-    history_text = ""
-    if history:
-        history_text = "\n\nRecent conversation:\n"
-        for turn in history:
-            history_text += f"User: {turn['user']}\nAssistant: {turn['assistant']}\n"
-
-    summary_prompt = f"""
-A user asked: "{query}"
-{history_text}
-Here are academic papers found on Google Scholar:
-{context}
-
-Give a 2-3 sentence spoken summary. Mention 1-2 specific paper titles by name.
-Be concise and clear — this will be read aloud.
-"""
-    return await generate_with_fallback(summary_prompt)
+    return _build_response(papers)

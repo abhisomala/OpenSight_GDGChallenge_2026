@@ -1,5 +1,6 @@
 import asyncio
 import sys
+
 import json
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from agents.shopping import run_shopping_agent
@@ -9,6 +10,7 @@ from agents.general import run_general_agent
 from agents.router import plan_intent, generate_with_fallback
 from agents.shopping import close_active_browser as close_shopping_browser
 from agents.research import close_active_browser as close_research_browser
+from agents.calendar import close_active_browser as close_calendar_browser
 import os
 from agents.calendar import close_active_browser as close_calendar_browser
 from dotenv import load_dotenv
