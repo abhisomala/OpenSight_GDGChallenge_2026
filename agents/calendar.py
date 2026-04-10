@@ -2,16 +2,26 @@ import os
 import datetime
 import json
 import re
+import threading
 from google.oauth2.credentials import Credentials
 from google_auth_oauthlib.flow import InstalledAppFlow
 from google.auth.transport.requests import Request
 from googleapiclient.discovery import build
 from agents.router import generate_with_fallback
 from dotenv import load_dotenv
+from playwright.sync_api import sync_playwright
 
 load_dotenv()
 
 SCOPES = ['https://www.googleapis.com/auth/calendar']
+
+_active_browser: dict | None = None
+
+def close_active_browser():
+    global _active_browser
+    if _active_browser:
+        _active_browser["close"] = True
+        _active_browser = None
 
 def get_calendar_service():
     creds = None
@@ -27,7 +37,28 @@ def get_calendar_service():
             token.write(creds.to_json())
     return build('calendar', 'v3', credentials=creds)
 
+
+def _open_calendar_browser(result_holder: dict) -> None:
+    try:
+        import subprocess
+        subprocess.Popen([
+            "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+            "--new-window",
+            "--window-size=680,780",
+            "--window-position=720,60",
+            "https://calendar.google.com"
+        ])
+        # stay alive until agent switches
+        while not result_holder.get("close"):
+            import time
+            time.sleep(0.5)
+    except Exception as e:
+        print(f"[calendar] browser error: {e}")
+
+
 async def run_calendar_agent(query: str) -> str:
+    global _active_browser
+
     parse_prompt = f"""
     Extract calendar event details from this request: "{query}"
     Respond ONLY with JSON:
@@ -45,6 +76,15 @@ async def run_calendar_agent(query: str) -> str:
 
     service = get_calendar_service()
 
+    # open Google Calendar browser in background
+    result_holder = {"close": False}
+    _active_browser = result_holder
+    threading.Thread(
+        target=_open_calendar_browser,
+        args=(result_holder,),
+        daemon=True,
+    ).start()
+
     if details.get("action") == "create":
         start_dt = datetime.datetime.strptime(
             f"{details['date']} {details.get('time', '09:00')}", "%Y-%m-%d %H:%M"
@@ -57,7 +97,7 @@ async def run_calendar_agent(query: str) -> str:
             'end': {'dateTime': end_dt.isoformat(), 'timeZone': 'America/New_York'},
         }
         service.events().insert(calendarId='primary', body=event).execute()
-        return f"Done! I've created '{details.get('title')}' on {details['date']} at {details.get('time', '9 AM')} in your Google Calendar."
+        return f"Done! Created '{details.get('title')}' on {details['date']} at {details.get('time', '9 AM')}."
 
     else:
         now = datetime.datetime.utcnow().isoformat() + 'Z'

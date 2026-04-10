@@ -10,6 +10,7 @@ from agents.router import plan_intent, generate_with_fallback
 from agents.shopping import close_active_browser as close_shopping_browser
 from agents.research import close_active_browser as close_research_browser
 import os
+from agents.calendar import close_active_browser as close_calendar_browser
 from dotenv import load_dotenv
 
 if sys.platform == "win32":
@@ -31,6 +32,7 @@ AGENT_LABELS = {
 def close_all_browsers():
     close_shopping_browser()
     close_research_browser()
+    close_calendar_browser()
 
 
 def _is_short_actionable_text(text: str, shopping_memory: dict) -> bool:
