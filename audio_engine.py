@@ -17,11 +17,11 @@ def init_microphone(state):
         print(f"[mic] Default input device error: {e}, falling back to library default")
 
 
-def run_deepgram_loop(state, session_token: int, redraw_cb, on_final_cb, on_interim_cb):
-    asyncio.run(_deepgram_retry(state, session_token, redraw_cb, on_final_cb, on_interim_cb))
+def run_deepgram_loop(state, session_token: int, redraw_cb, on_final_cb, on_interim_cb, on_wake_cb=None):
+    asyncio.run(_deepgram_retry(state, session_token, redraw_cb, on_final_cb, on_interim_cb, on_wake_cb))
 
 
-async def _deepgram_retry(state, session_token, redraw_cb, on_final_cb, on_interim_cb):
+async def _deepgram_retry(state, session_token, redraw_cb, on_final_cb, on_interim_cb, on_wake_cb=None):
     try:
         websockets = __import__("websockets")
     except Exception:
@@ -31,7 +31,7 @@ async def _deepgram_retry(state, session_token, redraw_cb, on_final_cb, on_inter
     max_retries = 5
     while not state.stop_event.is_set() and session_token == state.session_token:
         try:
-            await _deepgram_listen(state, session_token, on_final_cb, on_interim_cb, websockets)
+            await _deepgram_listen(state, session_token, on_final_cb, on_interim_cb, websockets, on_wake_cb)
         except Exception as e:
             print(f"[deepgram] error: {e}")
         if state.stop_event.is_set() or session_token != state.session_token:
@@ -44,7 +44,7 @@ async def _deepgram_retry(state, session_token, redraw_cb, on_final_cb, on_inter
         await asyncio.sleep(wait)
 
 
-async def _deepgram_listen(state, session_token, on_final_cb, on_interim_cb, websockets):
+async def _deepgram_listen(state, session_token, on_final_cb, on_interim_cb, websockets, on_wake_cb=None):
     api_key = os.getenv("DEEPGRAM_API_KEY")
     if not api_key:
         return
@@ -111,7 +111,14 @@ async def _deepgram_listen(state, session_token, on_final_cb, on_interim_cb, web
                             is_final = bool(data.get("is_final") or data.get("speech_final"))
                             if transcript and transcript.strip():
                                 if is_final:
-                                    on_final_cb(transcript)
+                                    transcript_lower = transcript.lower().strip()
+                                    if on_wake_cb and any(phrase in transcript_lower for phrase in [
+                                        "hey opensight", "opensight", "hey open sight",
+                                        "open site", "hey open site",
+                                    ]):
+                                        on_wake_cb()
+                                    else:
+                                        on_final_cb(transcript)
                                 else:
                                     on_interim_cb(f"... {transcript}")
                     except asyncio.TimeoutError:

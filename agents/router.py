@@ -61,7 +61,40 @@ async def generate_with_fallback(contents: str) -> str:
             print(f"[gemini] {model} failed: {e}, trying next...")
     raise Exception("All Gemini models unavailable")
 
-async def plan_intent(user_text: str, history: list = []) -> list:
+
+def _looks_like_shopping_followup(user_text: str, history: list, shopping_memory: dict | None) -> bool:
+    text = (user_text or "").strip().lower()
+    if not text:
+        return False
+
+    has_recent_options = bool((shopping_memory or {}).get("last_results"))
+    if not has_recent_options:
+        # Fallback: detect recent option-style assistant response.
+        for turn in (history or []):
+            assistant = (turn.get("assistant") or "").lower()
+            if "option 1:" in assistant:
+                has_recent_options = True
+                break
+
+    if not has_recent_options:
+        return False
+
+    followup_markers = [
+        r"\boption\s*\d+\b",
+        r"\b(first|second|third|1st|2nd|3rd)\b",
+        r"\b(click|open|buy|select|choose)\b",
+        r"\b(that one|this one|the first one|the second one|the third one)\b",
+        r"\btell me more\b",
+        r"\bmore about\b",
+    ]
+    return any(re.search(pattern, text) for pattern in followup_markers)
+
+
+async def plan_intent(user_text: str, history: list | None = None, shopping_memory: dict | None = None) -> list:
+    # Deterministic override for short follow-ups like "option 2".
+    if _looks_like_shopping_followup(user_text, history or [], shopping_memory):
+        return [{"intent": "SHOPPING", "query": user_text}]
+
     history_text = ""
     if history:
         history_text = "\n\nRecent conversation:\n"

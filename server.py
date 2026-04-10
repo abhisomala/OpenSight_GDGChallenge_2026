@@ -27,6 +27,24 @@ AGENT_LABELS = {
 }
 
 
+def _is_short_actionable_text(text: str, shopping_memory: dict) -> bool:
+    t = (text or "").strip().lower()
+    if not t:
+        return False
+
+    has_options = bool((shopping_memory or {}).get("last_results"))
+    if not has_options:
+        return False
+
+    return any([
+        "option" in t,
+        any(word in t for word in ["first", "second", "third", "1st", "2nd", "3rd"]),
+        any(word in t for word in ["open", "click", "buy", "select", "choose"]),
+        "that one" in t,
+        "this one" in t,
+    ])
+
+
 async def send_status(ws: WebSocket, agent: str, state: str, detail: str = "") -> None:
     await ws.send_text(json.dumps({
         "type": "status",
@@ -36,15 +54,16 @@ async def send_status(ws: WebSocket, agent: str, state: str, detail: str = "") -
     }))
 
 
-async def run_agent(intent: str, query: str) -> str:
+async def run_agent(intent: str, query: str, shopping_memory: dict | None = None) -> tuple[str, dict | None]:
     if intent == "SHOPPING":
-        return await run_shopping_agent(query)
+        result_text, memory_update = await run_shopping_agent(query, shopping_memory)
+        return result_text, memory_update
     elif intent == "CALENDAR":
-        return await run_calendar_agent(query)
+        return await run_calendar_agent(query), None
     elif intent == "RESEARCH":
-        return await run_research_agent(query)
+        return await run_research_agent(query), None
     else:
-        return await generate_with_fallback(f"Answer in 2 sentences max, conversationally: {query}")
+        return await generate_with_fallback(f"Answer in 2 sentences max, conversationally: {query}"), None
 
 
 @app.websocket("/ws")
@@ -52,6 +71,7 @@ async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     print("[opensight] client connected")
     conversation_history = []  # moved outside the loop
+    shopping_memory = {"last_query": "", "last_results": []}
 
     try:
         while True:
@@ -59,7 +79,7 @@ async def websocket_endpoint(ws: WebSocket):
             message = json.loads(data)
             user_text = message.get("text", "")
 
-            if len(user_text.split()) < 4:
+            if len(user_text.split()) < 4 and not _is_short_actionable_text(user_text, shopping_memory):
                 await ws.send_text(json.dumps({"type": "response", "text": "I didn't catch that. Could you say that again?"}))
                 await send_status(ws, "IDLE", "idle")
                 continue
@@ -68,7 +88,7 @@ async def websocket_endpoint(ws: WebSocket):
             await send_status(ws, "BRAIN", "thinking", "routing")
 
             try:
-                steps = await plan_intent(user_text, conversation_history)
+                steps = await plan_intent(user_text, conversation_history, shopping_memory)
                 print(f"[opensight] plan: {steps}")
 
                 all_responses = []
@@ -85,9 +105,12 @@ async def websocket_endpoint(ws: WebSocket):
                     await send_status(ws, intent if intent in AGENT_LABELS else "GENERAL", "thinking", label)
 
                     print(f"[opensight] step {i+1}: {intent} | query: {query}")
-                    result = await run_agent(intent, query)
+                    result, memory_update = await run_agent(intent, query, shopping_memory)
                     all_responses.append(result)
                     previous_result = result
+
+                    if intent == "SHOPPING" and memory_update is not None:
+                        shopping_memory = memory_update
 
                 if len(all_responses) == 1:
                     final_response = all_responses[0]

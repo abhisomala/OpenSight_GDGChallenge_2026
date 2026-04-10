@@ -1,6 +1,8 @@
 import math
 import os
+import re
 import threading
+import textwrap
 import time
 import tkinter as tk
 from dotenv import load_dotenv
@@ -24,6 +26,10 @@ class LiquidGlassDisplay:
         self.state = AppState()
         self.state.agent_enabled = websockets is not None
         self.pulse_job = None
+        self.ai_animation_job = None
+        self.ai_render_text = ""
+        self.ai_animation_target = ""
+        self.ai_animation_index = 0
 
         init_microphone(self.state)
 
@@ -33,8 +39,8 @@ class LiquidGlassDisplay:
         self.voice_thread.start()
 
         self.root.title("OpenSight - Technology that Adapts to You.")
-        self.root.geometry("720x360")
-        self.root.minsize(720, 360)
+        self.root.geometry("720x560")
+        self.root.minsize(720, 560)
         self.root.resizable(False, False)
         self.root.configure(bg="#0b1826")
 
@@ -55,6 +61,8 @@ class LiquidGlassDisplay:
         self.bg_canvas.place(relx=0, rely=0, relwidth=1, relheight=1)
         self.bg_canvas.bind("<Configure>", self.redraw)
         self.bg_canvas.bind("<Button-1>", self.on_canvas_click)
+        self.root.bind("<KeyPress-space>", self._on_spacebar_press)
+        self.root.focus_set()
 
         self.root.protocol("WM_DELETE_WINDOW", self.close_app)
 
@@ -113,23 +121,44 @@ class LiquidGlassDisplay:
         divider_y = int(h * 0.45)
         bottom_zone_y = int(h * 0.62)
 
-        self.bg_canvas.create_text(stack_cx, top_zone_y - 22, text="YOU",
+        self.bg_canvas.create_text(stack_cx, top_zone_y - 22, text="OPENSIGHT",
                                     fill="#7aa5bc", font=("SF Mono", 8, "bold"), anchor="center")
-        user_display = s.live_transcript if s.live_transcript else (
-            s.last_user_text if s.last_user_text else "Speak and your words will appear here..."
-        )
-        self.bg_canvas.create_text(stack_cx, top_zone_y, text=user_display,
-                                    fill="#2b5d79" if (s.live_transcript or s.last_user_text) else "#6a8ba2",
-                                    font=("SF Mono", 12), width=text_w, justify="center", anchor="center")
+        ai_display = self.ai_render_text if self.ai_render_text else "Response will appear here..."
+        if self.ai_render_text:
+            ai_x = stack_cx - (text_w // 2)
+            ai_y = top_zone_y - 8
+            self.bg_canvas.create_text(
+                ai_x,
+                ai_y,
+                text=ai_display,
+                fill="#1a4a62",
+                font=("SF Mono", 12),
+                width=text_w,
+                justify="left",
+                anchor="nw",
+            )
+        else:
+            self.bg_canvas.create_text(
+                stack_cx,
+                top_zone_y,
+                text=ai_display,
+                fill="#6a8ba2",
+                font=("SF Mono", 12),
+                width=text_w,
+                justify="center",
+                anchor="center",
+            )
 
         self.bg_canvas.create_line(stack_cx - 120, divider_y, stack_cx + 120, divider_y,
                                     fill="#a8c4d4", width=1, dash=(4, 4))
 
-        self.bg_canvas.create_text(stack_cx, bottom_zone_y - 22, text="OPENSIGHT",
+        self.bg_canvas.create_text(stack_cx, bottom_zone_y - 22, text="YOU",
                                     fill="#7aa5bc", font=("SF Mono", 8, "bold"), anchor="center")
-        ai_display = s.last_ai_text if s.last_ai_text else "Response will appear here..."
-        self.bg_canvas.create_text(stack_cx, bottom_zone_y, text=ai_display,
-                                    fill="#1a4a62" if s.last_ai_text else "#6a8ba2",
+        user_display = s.live_transcript if s.live_transcript else (
+            s.last_user_text if s.last_user_text else "Speak and your words will appear here..."
+        )
+        self.bg_canvas.create_text(stack_cx, bottom_zone_y, text=user_display,
+                                    fill="#2b5d79" if (s.live_transcript or s.last_user_text) else "#6a8ba2",
                                     font=("SF Mono", 12), width=text_w, justify="center", anchor="center")
 
     def _draw_mic_icon(self, cx: int, cy: int, color: str) -> None:
@@ -138,6 +167,20 @@ class LiquidGlassDisplay:
         self.bg_canvas.create_arc(cx - 12, cy - 7, cx + 12, cy + 9, start=200, extent=140, style="arc", outline=color, width=2)
         self.bg_canvas.create_line(cx, cy + 14, cx, cy + 21, fill=color, width=2)
         self.bg_canvas.create_line(cx - 7, cy + 21, cx + 7, cy + 21, fill=color, width=2)
+
+    def _on_spacebar_press(self, event) -> str:
+        if not self.state.listening:
+            self.toggle_listening()
+        return "break"
+    
+    def _on_wake(self) -> None:
+        self._safe_after(0, self._handle_wake)
+
+    def _handle_wake(self) -> None:
+        if not self.state.listening:
+            self.toggle_listening()
+        # optionally play a chime or say "yes?"
+        self.state.voice_queue.put("Yes?")
 
     def _draw_agent_rail(self, rail_x: int, w: int, h: int) -> None:
         self.bg_canvas.create_text(rail_x + 18, 18, text="BRAIN / AGENTS",
@@ -276,7 +319,53 @@ class LiquidGlassDisplay:
         s = self.state
         s.last_ai_text = response
         s.transcript_history.append(f"OpenSight: {response}")
+        self._start_ai_response_animation(response)
         self.redraw()
+
+    def _format_ai_response(self, text: str) -> str:
+        cleaned = re.sub(r"\s+", " ", text).strip()
+        if not cleaned:
+            return ""
+
+        # Put each "Option N:" on its own bullet line.
+        with_option_breaks = re.sub(r"\s+(Option\s*\d+\s*:)", r"\n• \1", cleaned)
+        with_option_breaks = re.sub(r"^(Option\s*\d+\s*:)", r"• \1", with_option_breaks)
+
+        # If there are no explicit options, split by sentence for readability.
+        if "Option" not in with_option_breaks:
+            with_option_breaks = re.sub(r"([.!?])\s+", r"\1\n", with_option_breaks)
+
+        lines: list[str] = []
+        for line in with_option_breaks.splitlines():
+            stripped = line.strip()
+            if not stripped:
+                continue
+            indent = "  " if stripped.startswith("•") else ""
+            wrapped = textwrap.wrap(stripped, width=54, subsequent_indent=indent)
+            lines.extend(wrapped if wrapped else [stripped])
+
+        return "\n".join(lines)
+
+    def _start_ai_response_animation(self, response: str) -> None:
+        formatted = self._format_ai_response(response)
+        self.ai_animation_target = formatted
+        self.ai_render_text = ""
+        self.ai_animation_index = 0
+        if self.ai_animation_job is not None:
+            self.root.after_cancel(self.ai_animation_job)
+            self.ai_animation_job = None
+        self._tick_ai_response_animation()
+
+    def _tick_ai_response_animation(self) -> None:
+        if self.ai_animation_index >= len(self.ai_animation_target):
+            self.ai_animation_job = None
+            return
+
+        step = 4
+        self.ai_animation_index = min(self.ai_animation_index + step, len(self.ai_animation_target))
+        self.ai_render_text = self.ai_animation_target[:self.ai_animation_index]
+        self.redraw()
+        self.ai_animation_job = self.root.after(16, self._tick_ai_response_animation)
 
     # ── pulse animation ──
 
@@ -310,6 +399,9 @@ class LiquidGlassDisplay:
 
     def close_app(self) -> None:
         s = self.state
+        if self.ai_animation_job is not None:
+            self.root.after_cancel(self.ai_animation_job)
+            self.ai_animation_job = None
         s.session_token += 1
         s.stop_event.set()
         s.shutdown_event.set()

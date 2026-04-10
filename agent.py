@@ -10,7 +10,7 @@ except Exception:
 def process_recognized_text(state, text: str, session_token: int, on_response_cb, safe_after_cb):
     if session_token != state.session_token:
         return
-    if len(text.split()) < 3:
+    if not text or not text.strip():
         return
     if not state.agent_enabled:
         state.voice_queue.put(text)
@@ -25,6 +25,11 @@ def process_recognized_text(state, text: str, session_token: int, on_response_cb
         response = query_agent_response(state, text, session_token, safe_after_cb)
         if session_token != state.session_token:
             return
+        if not response:
+            state.voice_queue.put("Sorry, let me try that again.")
+            response = query_agent_response(state, text, session_token, safe_after_cb)
+            if session_token != state.session_token:
+                return
         if response:
             safe_after_cb(0, on_response_cb, response)
             state.voice_queue.put(response)
@@ -49,6 +54,7 @@ async def _query_agent_response_async(state, user_text: str, session_token: int,
         async with websockets.connect(state.agent_ws_url, open_timeout=5, close_timeout=1) as ws:
             await ws.send(json.dumps({"text": user_text}))
             final_response = ""
+            shopping_loading_spoken = False
 
             while True:
                 if session_token != state.session_token:
@@ -62,6 +68,13 @@ async def _query_agent_response_async(state, user_text: str, session_token: int,
                     s = str(payload.get("state", "thinking")).strip() or "thinking"
                     detail = str(payload.get("detail", "")).strip()
                     safe_after_cb(0, set_agent_status, state, agent, s, detail)
+                    if (
+                        not shopping_loading_spoken
+                        and agent.strip().upper() == "SHOPPING"
+                        and s.strip().lower() == "thinking"
+                    ):
+                        state.voice_queue.put("Searching Amazon now.")
+                        shopping_loading_spoken = True
                 elif msg_type == "response":
                     final_response = str(payload.get("text", "")).strip()
                     break
