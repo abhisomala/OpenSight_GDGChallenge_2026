@@ -39,6 +39,13 @@ class LiquidGlassDisplay:
         self.voice_thread.start()
 
         self.root.title("OpenSight - Technology that Adapts to You.")
+        try:
+            from PIL import Image, ImageTk
+            img = Image.open("opensight_icon.png")
+            icon = ImageTk.PhotoImage(img)
+            self.root.iconphoto(True, icon)
+        except Exception as e:
+            print(f"[icon] could not load: {e}")
         self.root.geometry("720x560")
         self.root.minsize(720, 560)
         self.root.resizable(False, False)
