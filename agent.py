@@ -7,7 +7,7 @@ except Exception:
     websockets = None
 
 
-def process_recognized_text(state, text: str, session_token: int, on_response_cb, safe_after_cb):
+def process_recognized_text(state, text: str, session_token: int, on_response_cb, safe_after_cb, status_cb=None):
     if session_token != state.session_token:
         return
     if not text or not text.strip():
@@ -22,12 +22,12 @@ def process_recognized_text(state, text: str, session_token: int, on_response_cb
         state.agent_request_in_flight = True
 
     try:
-        response = query_agent_response(state, text, session_token, safe_after_cb)
+        response = query_agent_response(state, text, session_token, safe_after_cb, status_cb=status_cb)
         if session_token != state.session_token:
             return
         if not response:
             state.voice_queue.put("Sorry, let me try that again.")
-            response = query_agent_response(state, text, session_token, safe_after_cb)
+            response = query_agent_response(state, text, session_token, safe_after_cb, status_cb=status_cb)
             if session_token != state.session_token:
                 return
         if response:
@@ -38,17 +38,17 @@ def process_recognized_text(state, text: str, session_token: int, on_response_cb
             state.agent_request_in_flight = False
 
 
-def query_agent_response(state, user_text: str, session_token: int, safe_after_cb) -> str:
+def query_agent_response(state, user_text: str, session_token: int, safe_after_cb, status_cb=None) -> str:
     if websockets is None:
         return ""
     try:
-        return asyncio.run(_query_agent_response_async(state, user_text, session_token, safe_after_cb))
+        return asyncio.run(_query_agent_response_async(state, user_text, session_token, safe_after_cb, status_cb=status_cb))
     except Exception as e:
         print(f"[agent] query error: {e}")
         return ""
 
 
-async def _query_agent_response_async(state, user_text: str, session_token: int, safe_after_cb) -> str:
+async def _query_agent_response_async(state, user_text: str, session_token: int, safe_after_cb, status_cb=None) -> str:
     safe_after_cb(0, set_agent_status, state, "BRAIN", "thinking", "routing")
     try:
         async with websockets.connect(state.agent_ws_url, open_timeout=5, close_timeout=1) as ws:
@@ -75,9 +75,14 @@ async def _query_agent_response_async(state, user_text: str, session_token: int,
                     ):
                         state.voice_queue.put("Searching Amazon now.")
                         shopping_loading_spoken = True
+                elif msg_type == "research_status":
+                    msg = str(payload.get("text", "")).strip()
+                    if msg and status_cb:
+                        safe_after_cb(0, status_cb, msg)
                 elif msg_type == "response":
                     final_response = str(payload.get("text", "")).strip()
                     break
+
 
             safe_after_cb(0, set_agent_status, state, "IDLE", "idle", "")
             return final_response

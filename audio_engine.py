@@ -71,6 +71,8 @@ async def _deepgram_listen(state, session_token, on_final_cb, on_interim_cb, web
                     await ws.send(frame)
 
             def audio_callback(indata, frames, t, status):
+                if status:
+                    return
                 if not ws_alive or state.stop_event.is_set():
                     return
                 if session_token != state.session_token:
@@ -156,6 +158,7 @@ def voice_worker(state):
 
 
 def speak_text(state, text: str):
+    return # disable TTS for now
     import platform
     import subprocess
 

@@ -71,6 +71,7 @@ class LiquidGlassDisplay:
         self.disabled_agents: set[str] = getattr(self.state, "disabled_agents", set())
         self._last_agent_status = (self.state.agent_focus, self.state.agent_phase)
         self._reasoning_initialized_for_turn = False
+        self.research_status = ""
 
         # init toggle positions
         for agent in AGENT_ORDER:
@@ -354,9 +355,14 @@ class LiquidGlassDisplay:
             self._draw_progress_bar(stack_cx, bottom_zone_y-10, ai_text_w, theme)
 
         if self.is_thinking:
-            dots = "●" * (self.thinking_step % 4) or "●"
-            self.bg_canvas.create_text(stack_cx, bottom_zone_y+14, text=dots,
-                                        fill=theme["accent"], font=self.typo["fx_large"], anchor="center")
+            if self.research_status:
+                self.bg_canvas.create_text(lx, bottom_zone_y, text=self.research_status,
+                                            fill=theme["accent"], font=("SF Mono", 12),
+                                            width=ai_text_w, justify="left", anchor="nw")
+            else:
+                dots = "●" * (self.thinking_step % 4) or "●"
+                self.bg_canvas.create_text(stack_cx, bottom_zone_y+14, text=dots,
+                                            fill=theme["accent"], font=("SF Mono", 20), anchor="center")
         elif self.ai_render_text:
             self.bg_canvas.create_text(lx, bottom_zone_y, text=self.ai_render_text,
                                         fill=theme["main_text"], font=self.typo["body_large"],
@@ -474,7 +480,7 @@ class LiquidGlassDisplay:
             self.bg_canvas.create_text(rail_x+18, 66, text=f"User: {self.state.username}",
                                        fill=theme.get("meta", theme["muted"]), font=self.typo["mono_micro"], anchor="nw")
 
-        chain_top = h - 230
+        chain_top = h - 225
         chain_bottom = h - 30
         y_cursor = 84
         for agent in AGENT_ORDER:
@@ -814,8 +820,8 @@ class LiquidGlassDisplay:
 
         node_x = left + 20
         title_x = left + 36
-        start_y = top + 46
-        step_gap = 36
+        start_y = top + 50
+        step_gap = 40
 
         completed_count = sum(1 for st in self.state.reasoning_steps if st["status"] == "complete")
         progress_y = start_y + max(0, completed_count - 1) * step_gap
@@ -870,7 +876,7 @@ class LiquidGlassDisplay:
             self.bg_canvas.create_text(title_x, y - 7, text=label,
                                        fill=title_color, font=self.typo["section"], anchor="nw")
             self.bg_canvas.create_text(title_x, y + 7, text=summary,
-                                       fill=subtext_color, font=(self.font_ui, 11, "normal"), anchor="nw",
+                                       fill=subtext_color, font=(self.font_ui, 10, "normal"), anchor="nw",
                                        width=max(90, right - title_x - 10), justify="left")
 
     def on_canvas_motion(self, event):
@@ -1190,6 +1196,7 @@ class LiquidGlassDisplay:
 
     def _stop_thinking(self):
         self.is_thinking = False
+        self.research_status = ""
         if self.state.listening and not self.is_speaking_visual:
             self.waveform_mode = "idle"
             self.waveform_amp_target = 0.24
@@ -1286,6 +1293,12 @@ class LiquidGlassDisplay:
         self._stop_pulse_loop()
         self.root.destroy()
 
+    def _on_research_status(self, status: str) -> None:
+        self._safe_after(0, self._apply_research_status, status)
+
+    def _apply_research_status(self, status: str) -> None:
+        self.research_status = status
+        self.redraw()
 
 def main():
     root = tk.Tk()

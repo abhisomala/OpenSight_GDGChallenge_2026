@@ -1,17 +1,14 @@
 import asyncio
 import sys
-
 import json
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from agents.shopping import run_shopping_agent
 from agents.calendar import run_calendar_agent
-from agents.research import run_research_agent
+from agents.research import run_research_agent, research_memory, _is_followup
 from agents.general import run_general_agent
 from agents.router import plan_intent, generate_with_fallback
 from agents.shopping import close_active_browser as close_shopping_browser
 from agents.research import close_active_browser as close_research_browser
-from agents.calendar import close_active_browser as close_calendar_browser
-import os
 from agents.calendar import close_active_browser as close_calendar_browser
 from dotenv import load_dotenv
 
@@ -53,6 +50,12 @@ def _is_short_actionable_text(text: str, shopping_memory: dict) -> bool:
     ])
 
 
+def _is_research_followup(text: str) -> bool:
+    if not research_memory["last_papers"]:
+        return False
+    return _is_followup(text)
+
+
 async def send_status(ws: WebSocket, agent: str, state: str, detail: str = "") -> None:
     await ws.send_text(json.dumps({
         "type": "status",
@@ -62,7 +65,7 @@ async def send_status(ws: WebSocket, agent: str, state: str, detail: str = "") -
     }))
 
 
-async def run_agent(intent: str, query: str, history: list, shopping_memory: dict, last_intent: str = "") -> tuple[str, dict | None]:
+async def run_agent(intent: str, query: str, history: list, shopping_memory: dict, last_intent: str = "", status_cb=None) -> tuple[str, dict | None]:
     if last_intent and intent != last_intent:
         close_all_browsers()
     if intent == "SHOPPING":
@@ -73,7 +76,7 @@ async def run_agent(intent: str, query: str, history: list, shopping_memory: dic
     elif intent == "CALENDAR":
         return await run_calendar_agent(query), None
     elif intent == "RESEARCH":
-        return await run_research_agent(query, history), None
+        return await run_research_agent(query, history, status_cb=status_cb), None
     else:
         return await run_general_agent(query, history), None
 
@@ -101,7 +104,12 @@ async def websocket_endpoint(ws: WebSocket):
             await send_status(ws, "BRAIN", "thinking", "routing")
 
             try:
-                steps = await plan_intent(user_text, conversation_history)
+                # override router for research follow-ups so they never go to GENERAL
+                if _is_research_followup(user_text):
+                    print(f"[opensight] research follow-up override")
+                    steps = [{"intent": "RESEARCH", "query": user_text}]
+                else:
+                    steps = await plan_intent(user_text, conversation_history)
                 print(f"[opensight] plan: {steps}")
 
                 all_responses = []
@@ -118,7 +126,17 @@ async def websocket_endpoint(ws: WebSocket):
                     await send_status(ws, intent if intent in AGENT_LABELS else "GENERAL", "thinking", label)
 
                     print(f"[opensight] step {i+1}: {intent} | query: {query}")
-                    result, memory_update = await run_agent(intent, query, conversation_history, shopping_memory, last_intent)
+
+                    async def _research_status(msg: str):
+                        try:
+                            await ws.send_text(json.dumps({"type": "research_status", "text": msg}))
+                        except Exception:
+                            pass
+
+                    result, memory_update = await run_agent(
+                        intent, query, conversation_history, shopping_memory,
+                        last_intent, status_cb=_research_status if intent == "RESEARCH" else None
+                    )
                     last_intent = intent
                     all_responses.append(result)
                     previous_result = result
