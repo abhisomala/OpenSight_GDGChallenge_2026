@@ -171,6 +171,7 @@ def speak_text(state, text: str):
                 voice_id="onwK4e9ZLuTAKqWW03F9",
                 text=text,
                 model_id="eleven_turbo_v2",
+                
             )
             el_stream(audio)
             return

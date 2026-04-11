@@ -1,5 +1,8 @@
 import queue
 import threading
+import json
+import os
+import time
 
 class AppState:
     def __init__(self):
@@ -29,6 +32,50 @@ class AppState:
         self.agent_focus = "IDLE"
         self.agent_phase = "idle"
 
+        self.ui_mode = "light"
+        self.active_right_tab = "agents"
+        self.research_panel_open = False
+        self.research_history: list[str] = []
+        self.username = ""
+        self.ui_config_path = os.path.join(os.path.dirname(__file__), ".opensight_ui.json")
+
+        self.reasoning_steps = [
+            {"id": 1, "label": "Classify intent", "status": "pending", "summary": "Waiting for request"},
+            {"id": 2, "label": "Extract constraints", "status": "pending", "summary": "Waiting for request"},
+            {"id": 3, "label": "Route to agent", "status": "pending", "summary": "Waiting for request"},
+            {"id": 4, "label": "Execute task", "status": "pending", "summary": "Waiting for request"},
+            {"id": 5, "label": "Generate response", "status": "pending", "summary": "Waiting for request"},
+        ]
+        self.reasoning_transition_at = [time.monotonic()] * len(self.reasoning_steps)
+        self.reasoning_active_index = -1
+        self.reasoning_last_event = "idle"
+
         self.orb_cx = 0
         self.orb_cy = 0
         self.orb_r = 0
+
+    def load_ui_preferences(self) -> None:
+        try:
+            with open(self.ui_config_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+        except Exception:
+            return
+
+        mode = str(data.get("ui_mode", "")).lower()
+        if mode in ("light", "dark"):
+            self.ui_mode = mode
+
+        username = data.get("username", "")
+        if isinstance(username, str):
+            self.username = username.strip()
+
+    def save_ui_preferences(self) -> None:
+        data = {
+            "ui_mode": self.ui_mode,
+            "username": self.username,
+        }
+        try:
+            with open(self.ui_config_path, "w", encoding="utf-8") as f:
+                json.dump(data, f)
+        except Exception:
+            return
