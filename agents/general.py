@@ -1,8 +1,6 @@
 import os
 import httpx
-import threading
 from agents.router import generate_with_fallback
-from playwright.sync_api import sync_playwright
 
 SYSTEM_PROMPT = """
 You are OpenSight, a helpful voice assistant. You have been given web search results to answer the user's question accurately.
@@ -11,28 +9,12 @@ Do not use bullet points, lists, or markdown. Speak naturally.
 Base your answer on the search results provided. If the results don't help, say so honestly.
 """
 
-def _open_search_browser(search_url: str) -> None:
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False, args=[
-                "--window-size=680,780",
-                "--window-position=720,60",
-            ])
-            page = browser.new_page()
-            page.goto(search_url)
-            page.wait_for_timeout(10000)
-            browser.close()
-    except Exception as e:
-        print(f"[general] browser error: {e}")
-
 
 async def _search_web(query: str) -> str:
     api_key = os.getenv("GOOGLE_SEARCH_API_KEY")
     cx = os.getenv("GOOGLE_SEARCH_CX")
-
     if not api_key or not cx:
         return ""
-
     try:
         async with httpx.AsyncClient() as client:
             resp = await client.get(
@@ -54,32 +36,20 @@ async def _search_web(query: str) -> str:
 
 
 async def run_general_agent(query: str, history: list = [], memory=None) -> str:
-    # search the web for current info
     search_results = await _search_web(query)
 
-    # open browser in background showing search results
-    search_url = f"https://www.google.com/search?q={query.replace(' ', '+')}"
-    threading.Thread(
-        target=_open_search_browser,
-        args=(search_url,),
-        daemon=True,
-    ).start()
-
-    # build history context
     history_text = ""
     if history:
         history_text = "\n\nRecent conversation:\n"
         for turn in history:
             history_text += f"User: {turn['user']}\nAssistant: {turn['assistant']}\n"
 
-    # inject shared memory context so cross-agent references resolve
     mem_context_block = ""
     if memory is not None:
         ctx = memory.context_for_prompt()
         if ctx and ctx != "No prior context.":
             mem_context_block = f"\n\nSESSION CONTEXT:\n{ctx}\n"
 
-    # build prompt with search results
     if search_results:
         prompt = f"{SYSTEM_PROMPT}{mem_context_block}{history_text}\n\nSearch results for '{query}':\n{search_results}\n\nUser: {query}"
     else:

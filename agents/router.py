@@ -9,12 +9,9 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 MODELS = [
     "gemini-2.5-flash",
-    "gemini-2.0-flash",
-    "gemini-2.0-flash-lite",
     "gemini-2.5-pro",
-    "gemini-flash-latest",
-    "gemini-flash-lite-latest",
-    "gemini-pro-latest",
+    "gemini-1.5-flash",
+    "gemini-1.5-pro",
 ]
 
 SYSTEM_PROMPT = """
@@ -49,9 +46,21 @@ Always return valid JSON with a "steps" array. Never return anything else.
 Keep all responses under 3 sentences. Be direct and concise.
 """
 
+# ── Follow-up pattern matchers ─────────────────────────────────────────────────
 
 RESEARCH_FOLLOWUP_PATTERN = re.compile(
     r"\b(author|who wrote|who made|first paper|second paper|that paper|the paper|tell me more|methodology|findings|published|journal|when was)\b",
+    re.IGNORECASE,
+)
+
+SHOPPING_FOLLOWUP_PATTERN = re.compile(
+    r"\b(open|click|buy|select|choose|option\s*\d+|first|second|third|1st|2nd|3rd|that one|this one|the first one|the second one|the third one|repeat|tell me more|more about)\b",
+    re.IGNORECASE,
+)
+
+# Questions about a product already on screen — route to GENERAL with context
+PRODUCT_CONTEXT_PATTERN = re.compile(
+    r"\b(ingredient|ingredients|nutrition|calories|allergen|contain|made of|what.s in|what is in|how much|serving|protein|carb|fat|sugar|sodium|fiber|review|rating|how many star)\b",
     re.IGNORECASE,
 )
 
@@ -68,6 +77,25 @@ def _has_recent_research_context(history: list | None) -> bool:
     return False
 
 
+def _has_recent_shopping_context(history: list | None, shopping_memory: dict | None = None) -> bool:
+    # also check shopping_memory directly — survives server restarts
+    if shopping_memory and shopping_memory.get("last_results"):
+        return True
+    if not history:
+        return False
+    for turn in history[-3:]:
+        assistant_text = str(turn.get("assistant", "")).lower()
+        if any(phrase in assistant_text for phrase in [
+            "option", "found", "amazon", "$", "which one", "opening",
+            "i found", "two options", "three options", "got two", "got three",
+            "for $", "at $", "going for",
+        ]):
+            return True
+    return False
+
+
+# ── Gemini helpers ─────────────────────────────────────────────────────────────
+
 async def generate_with_fallback(contents: str) -> str:
     for model in MODELS:
         try:
@@ -82,9 +110,7 @@ async def generate_with_fallback(contents: str) -> str:
 
 
 async def extract_preferences(query: str, memory) -> None:
-    """Lightweight Gemini call that extracts budget/allergies/diet/topics
-    from the current query and writes them into shared memory.
-    Skips very short or purely navigational queries."""
+    """Extract budget/allergies/diet/topics from query and write into shared memory."""
     if len(query.split()) < 4:
         return
 
@@ -97,11 +123,7 @@ async def extract_preferences(query: str, memory) -> None:
     )
 
     try:
-        response = client.models.generate_content(
-            model="gemini-2.0-flash-lite",
-            contents=prompt,
-        )
-        raw = re.sub(r"```json|```", "", response.text).strip()
+        raw = re.sub(r"```json|```", "", await generate_with_fallback(prompt)).strip()
         prefs = json.loads(raw)
 
         new_prefs: dict = {}
@@ -109,8 +131,7 @@ async def extract_preferences(query: str, memory) -> None:
             new_prefs["budget"] = prefs["budget"]
         if prefs.get("allergies"):
             existing = memory.preferences.get("allergies", [])
-            merged = list(set(existing + prefs["allergies"]))
-            new_prefs["allergies"] = merged
+            new_prefs["allergies"] = list(set(existing + prefs["allergies"]))
         if prefs.get("diet"):
             diet = prefs["diet"]
             if isinstance(diet, str):
@@ -131,31 +152,54 @@ async def extract_preferences(query: str, memory) -> None:
         print(f"[router] preference extraction skipped: {e}")
 
 
-async def plan_intent(user_text: str, history: list | None = None, memory=None) -> list:
+# ── Main planner ───────────────────────────────────────────────────────────────
+
+async def plan_intent(
+    user_text: str,
+    history: list | None = None,
+    memory=None,
+    shopping_memory: dict | None = None,
+) -> list:
     history = history or []
 
-    # extract preferences on every query (uses lightest model, safe to await)
+    # extract preferences on every query
     if memory is not None:
         await extract_preferences(user_text, memory)
 
-    # force RESEARCH for follow-up questions about papers
+    # ── product context question — user is asking about an open product page
+    # route to GENERAL so it answers from memory/knowledge rather than
+    # launching a new Amazon search
+    if PRODUCT_CONTEXT_PATTERN.search(user_text) and _has_recent_shopping_context(history, shopping_memory):
+        last_product = ""
+        if shopping_memory and shopping_memory.get("last_results"):
+            last_product = shopping_memory["last_results"][0].get("title", "")
+        enriched = f"{user_text} [context: user is looking at {last_product}]" if last_product else user_text
+        print(f"[router] product context question detected, routing to GENERAL")
+        return [{"intent": "GENERAL", "query": enriched}]
+
+    # ── shopping follow-up: pass original query through UNCHANGED
+    if _has_recent_shopping_context(history, shopping_memory) and SHOPPING_FOLLOWUP_PATTERN.search(user_text):
+        print(f"[router] shopping follow-up detected, passing original query through")
+        return [{"intent": "SHOPPING", "query": user_text}]
+
+    # ── research follow-up: enrich query with last research context
     if _has_recent_research_context(history) and RESEARCH_FOLLOWUP_PATTERN.search(user_text):
-        # find the last research response to give context
         last_research = ""
         for turn in reversed(history):
-            if any(phrase in turn.get("assistant", "").lower() for phrase in ["paper", "study", "research", "journal"]):
+            if any(phrase in turn.get("assistant", "").lower() for phrase in
+                   ["paper", "study", "research", "journal"]):
                 last_research = turn.get("assistant", "")
                 break
         enriched_query = f"{user_text} [context: {last_research}]" if last_research else user_text
         return [{"intent": "RESEARCH", "query": enriched_query}]
 
+    # ── general Gemini routing ──
     history_text = ""
     if history:
         history_text = "\n\nRecent conversation:\n"
         for turn in history:
             history_text += f"User: {turn['user']}\nAssistant: {turn['assistant']}\n"
 
-    # inject shared memory context so the router can handle cross-agent follow-ups
     memory_context = ""
     if memory is not None:
         ctx = memory.context_for_prompt()

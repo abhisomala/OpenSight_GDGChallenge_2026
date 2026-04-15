@@ -7,7 +7,6 @@ from playwright.sync_api import sync_playwright
 
 load_dotenv()
 
-_active_browser: dict | None = None
 _scholar_page = None
 
 research_memory = {
@@ -17,34 +16,8 @@ research_memory = {
 
 
 def close_active_browser():
-    global _active_browser
-    if _active_browser:
-        _active_browser["close"] = True
-        _active_browser = None
-
-
-def _open_scholar_browser(query: str, result_holder: dict) -> None:
     global _scholar_page
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False, args=[
-                "--window-size=720,900",
-                "--window-position=720,0",
-                "--no-first-run",
-                "--no-default-browser-check",
-            ])
-            context = browser.new_context(viewport={"width": 720, "height": 900})
-            page = context.new_page()
-            _scholar_page = page
-            search_url = f"https://scholar.google.com/scholar?q={query.replace(' ', '+')}"
-            page.goto(search_url)
-            page.wait_for_load_state("domcontentloaded")
-            while not result_holder.get("close"):
-                page.wait_for_timeout(500)
-            browser.close()
-            _scholar_page = None
-    except Exception as e:
-        print(f"[research] browser error: {e}")
+    _scholar_page = None
 
 
 def _shorten_title(title: str) -> str:
@@ -84,7 +57,7 @@ def _is_followup(query: str) -> bool:
 
 
 def _launch_paper_window(link: str) -> None:
-    """Open paper in a positioned Chromium window matching the Scholar panel."""
+    """Open paper link in a Chromium window. Handles PDF downloads gracefully."""
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=False, args=[
@@ -93,8 +66,16 @@ def _launch_paper_window(link: str) -> None:
                 "--no-first-run",
                 "--no-default-browser-check",
             ])
-            page = browser.new_page()
-            page.goto(link)
+            context = browser.new_context(
+                accept_downloads=True,          # don't throw when URL triggers a download
+                viewport={"width": 720, "height": 900},
+            )
+            page = context.new_page()
+            try:
+                page.goto(link, wait_until="domcontentloaded", timeout=15000)
+            except Exception as nav_err:
+                print(f"[research] navigation note: {nav_err}")
+                # window may still show something useful — continue waiting
             page.wait_for_timeout(60000)
             browser.close()
     except Exception as e:
@@ -102,8 +83,6 @@ def _launch_paper_window(link: str) -> None:
 
 
 def _open_paper(index: int) -> str:
-    global _scholar_page
-    print(f"[research] opening paper {index}, scholar_page={_scholar_page is not None}")
     papers = research_memory["last_papers"]
     if index >= len(papers):
         return "I don't have that paper."
@@ -111,22 +90,12 @@ def _open_paper(index: int) -> str:
     title = _shorten_title(papers[index].get("title", "Paper"))
     if not link:
         return "I don't have a link for that paper."
-
-    # try navigating the existing Scholar window first
-    if _scholar_page:
-        try:
-            _scholar_page.goto(link)
-            return f"Opening {title} now."
-        except Exception as e:
-            print(f"[research] scholar nav error: {e}")
-
-    # fallback — open in a new positioned Chromium window same as Scholar
     threading.Thread(target=_launch_paper_window, args=(link,), daemon=True).start()
     return f"Opening {title} now."
 
 
 async def run_research_agent(query: str, history: list = [], status_cb=None, memory=None) -> str:
-    global _active_browser, research_memory
+    global research_memory
 
     async def _status(msg: str):
         if status_cb:
@@ -139,7 +108,6 @@ async def run_research_agent(query: str, history: list = [], status_cb=None, mem
     if _is_followup(query) and research_memory["last_papers"]:
         q = query.lower()
 
-        # detect open intent
         wants_open = any(w in q for w in ["open", "pull up", "launch", "show me"])
         open_index = None
         if any(w in q for w in ["second", "2nd"]):
@@ -172,7 +140,6 @@ async def run_research_agent(query: str, history: list = [], status_cb=None, mem
             for turn in history:
                 history_text += f"User: {turn['user']}\nAssistant: {turn['assistant']}\n"
 
-        # inject shared memory context so cross-agent follow-ups resolve correctly
         mem_context_block = ""
         if memory is not None:
             ctx = memory.context_for_prompt()
@@ -200,14 +167,6 @@ User: "{query}"
     print(f"[research] new search: {query}")
     await _status("Building search query...")
 
-    result_holder = {"close": False}
-    _active_browser = result_holder
-    threading.Thread(
-        target=_open_scholar_browser,
-        args=(query, result_holder),
-        daemon=True,
-    ).start()
-
     params = {
         "engine": "google_scholar",
         "q": query,
@@ -234,10 +193,8 @@ User: "{query}"
     print(f"[research] done: {resp[:60]}")
 
     if memory is not None:
-        # store result so shopping / calendar agents can reference it
         memory.set_result("research", resp)
         memory.add_turn("assistant", resp, agent="research")
-        # add query keywords as topics for cross-agent context
         stopwords = {"what", "find", "show", "tell", "about", "papers", "research",
                      "study", "some", "give", "recent", "latest", "best", "good"}
         new_topics = [
