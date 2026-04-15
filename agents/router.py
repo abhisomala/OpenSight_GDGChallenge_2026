@@ -81,8 +81,62 @@ async def generate_with_fallback(contents: str) -> str:
     raise Exception("All Gemini models unavailable")
 
 
-async def plan_intent(user_text: str, history: list | None = None) -> list:
+async def extract_preferences(query: str, memory) -> None:
+    """Lightweight Gemini call that extracts budget/allergies/diet/topics
+    from the current query and writes them into shared memory.
+    Skips very short or purely navigational queries."""
+    if len(query.split()) < 4:
+        return
+
+    prompt = (
+        'Extract any user preferences or constraints from this query.\n'
+        'Return JSON only — no explanation, no markdown:\n'
+        '{"budget": null, "allergies": [], "diet": [], "topics": []}\n'
+        'If nothing is found, return all nulls/empty arrays.\n'
+        f'Query: {query}'
+    )
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-2.0-flash-lite",
+            contents=prompt,
+        )
+        raw = re.sub(r"```json|```", "", response.text).strip()
+        prefs = json.loads(raw)
+
+        new_prefs: dict = {}
+        if prefs.get("budget") is not None:
+            new_prefs["budget"] = prefs["budget"]
+        if prefs.get("allergies"):
+            existing = memory.preferences.get("allergies", [])
+            merged = list(set(existing + prefs["allergies"]))
+            new_prefs["allergies"] = merged
+        if prefs.get("diet"):
+            diet = prefs["diet"]
+            if isinstance(diet, str):
+                diet = [diet]
+            existing = memory.preferences.get("diet", [])
+            new_prefs["diet"] = list(set(existing + diet))
+        if new_prefs:
+            memory.update_preferences(new_prefs)
+
+        topics = prefs.get("topics") or []
+        existing_topics = set(memory.entities.get("topics", []))
+        for t in topics:
+            if t and t not in existing_topics:
+                memory.entities["topics"].append(t)
+                existing_topics.add(t)
+
+    except Exception as e:
+        print(f"[router] preference extraction skipped: {e}")
+
+
+async def plan_intent(user_text: str, history: list | None = None, memory=None) -> list:
     history = history or []
+
+    # extract preferences on every query (uses lightest model, safe to await)
+    if memory is not None:
+        await extract_preferences(user_text, memory)
 
     # force RESEARCH for follow-up questions about papers
     if _has_recent_research_context(history) and RESEARCH_FOLLOWUP_PATTERN.search(user_text):
@@ -101,8 +155,15 @@ async def plan_intent(user_text: str, history: list | None = None) -> list:
         for turn in history:
             history_text += f"User: {turn['user']}\nAssistant: {turn['assistant']}\n"
 
+    # inject shared memory context so the router can handle cross-agent follow-ups
+    memory_context = ""
+    if memory is not None:
+        ctx = memory.context_for_prompt()
+        if ctx and ctx != "No prior context.":
+            memory_context = f"\n\nSESSION CONTEXT (use this to understand follow-ups and user preferences):\n{ctx}"
+
     raw = re.sub(r"```json|```", "", await generate_with_fallback(
-        f"{SYSTEM_PROMPT}{history_text}\n\nUser message: {user_text}"
+        f"{SYSTEM_PROMPT}{history_text}{memory_context}\n\nUser message: {user_text}"
     )).strip()
 
     if not raw:
