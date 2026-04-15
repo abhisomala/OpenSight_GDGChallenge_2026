@@ -3,6 +3,7 @@ import re
 import threading
 import time
 from typing import Optional
+from urllib.parse import quote_plus
 from playwright.sync_api import sync_playwright
 
 _active_browser: dict | None = None
@@ -86,15 +87,32 @@ def _extract_option_index(query: str, max_options: int) -> Optional[int]:
     return None
 
 
+def _build_product_url(href: str | None, asin: str | None = None) -> str | None:
+    # prefer ASIN-based URL — always works, never redirects or errors
+    if asin:
+        return f"https://www.amazon.com/dp/{asin}"
+    if not href:
+        return None
+    # try extracting ASIN from href as fallback
+    asin_match = re.search(r'/dp/([A-Z0-9]{10})', href)
+    if asin_match:
+        return f"https://www.amazon.com/dp/{asin_match.group(1)}"
+    if href.startswith("http"):
+        return href
+    if href.startswith("/"):
+        return f"https://www.amazon.com{href}"
+    return f"https://www.amazon.com/{href}"
+
+
 def _open_product_page(url: str) -> None:
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=False, args=[
-            "--window-size=720,900",
-            "--window-position=720,0",
-            "--no-first-run",
-            "--no-default-browser-check",
-        ])
+                "--window-size=720,900",
+                "--window-position=720,0",
+                "--no-first-run",
+                "--no-default-browser-check",
+            ])
             context = browser.new_context(viewport={"width": 720, "height": 900})
             page = context.new_page()
             page.goto(url)
@@ -121,11 +139,15 @@ def _handle_followup_query(query: str, shopping_memory: dict) -> str:
         return "Which one — the first, second, or third?"
 
     selected = results[idx]
+
     if _is_open_intent(query):
-        if selected.get("url"):
-            threading.Thread(target=_open_product_page, args=(selected["url"],), daemon=True).start()
-            return f"Opening the {_shorten_title(selected['title'])}."
-        return "I can't find a direct link for that one."
+        url = selected.get("url")
+        title = _shorten_title(selected["title"])
+        if not url:
+            # properly encoded search fallback
+            url = f"https://www.amazon.com/s?k={quote_plus(selected['title'])}"
+        threading.Thread(target=_open_product_page, args=(url,), daemon=True).start()
+        return f"Opening the {title} now."
 
     return f"That's the {_shorten_title(selected['title'])}, going for {selected['price']}. Want me to open it?"
 
@@ -140,7 +162,6 @@ def _open_amazon_browser(query: str, result_holder: dict) -> None:
                 "--no-default-browser-check",
             ])
             context = browser.new_context(viewport={"width": 720, "height": 900})
-            context = browser.new_context(viewport={"width": 680, "height": 780})
             page = context.new_page()
 
             page.goto("https://www.amazon.com")
@@ -172,9 +193,11 @@ def _open_amazon_browser(query: str, result_holder: dict) -> None:
                     if not price:
                         continue
 
+                    # grab ASIN directly from the card attribute — most reliable source
+                    asin = item.get_attribute('data-asin')
                     title_link_el = item.query_selector('h2 a')
                     href = title_link_el.get_attribute('href') if title_link_el else None
-                    product_url = f"https://www.amazon.com{href}" if href and href.startswith('/') else href
+                    product_url = _build_product_url(href, asin)
 
                     results.append({
                         "title": title[:55],
