@@ -125,7 +125,7 @@ def _open_paper(index: int) -> str:
     return f"Opening {title} now."
 
 
-async def run_research_agent(query: str, history: list = [], status_cb=None) -> str:
+async def run_research_agent(query: str, history: list = [], status_cb=None, memory=None) -> str:
     global _active_browser, research_memory
 
     async def _status(msg: str):
@@ -172,18 +172,29 @@ async def run_research_agent(query: str, history: list = [], status_cb=None) -> 
             for turn in history:
                 history_text += f"User: {turn['user']}\nAssistant: {turn['assistant']}\n"
 
+        # inject shared memory context so cross-agent follow-ups resolve correctly
+        mem_context_block = ""
+        if memory is not None:
+            ctx = memory.context_for_prompt()
+            if ctx and ctx != "No prior context.":
+                mem_context_block = f"\n\nSESSION CONTEXT:\n{ctx}\n"
+
         prompt = f"""
 You are a voice assistant. Answer conversationally in 1-2 sentences.
 No filler phrases, no bullet points, no markdown.
 Get straight to the answer using only what's relevant below.
-
+{mem_context_block}
 Papers on "{research_memory['last_query']}":
 {context}
 {history_text}
 User: "{query}"
 """
         await _status("Composing response...")
-        return await generate_with_fallback(prompt)
+        result = await generate_with_fallback(prompt)
+        if memory is not None:
+            memory.set_result("research", result)
+            memory.add_turn("assistant", result, agent="research")
+        return result
 
     # ── new search path ──
     print(f"[research] new search: {query}")
@@ -221,4 +232,22 @@ User: "{query}"
     research_memory["last_query"] = query
     resp = _build_response(papers)
     print(f"[research] done: {resp[:60]}")
+
+    if memory is not None:
+        # store result so shopping / calendar agents can reference it
+        memory.set_result("research", resp)
+        memory.add_turn("assistant", resp, agent="research")
+        # add query keywords as topics for cross-agent context
+        stopwords = {"what", "find", "show", "tell", "about", "papers", "research",
+                     "study", "some", "give", "recent", "latest", "best", "good"}
+        new_topics = [
+            w.lower() for w in query.split()
+            if len(w) > 3 and w.lower() not in stopwords
+        ]
+        existing = set(memory.entities.get("topics", []))
+        for t in new_topics:
+            if t not in existing:
+                memory.entities["topics"].append(t)
+                existing.add(t)
+
     return resp

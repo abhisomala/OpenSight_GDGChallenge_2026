@@ -57,13 +57,20 @@ def _open_calendar_browser(result_holder: dict) -> None:
         print(f"[calendar] browser error: {e}")
 
 
-async def run_calendar_agent(query: str) -> str:
+async def run_calendar_agent(query: str, memory=None) -> str:
     global _active_browser
+
+    # inject shared memory so Gemini can fill in "take it" / "that product" references
+    mem_context_block = ""
+    if memory is not None:
+        ctx = memory.context_for_prompt()
+        if ctx and ctx != "No prior context.":
+            mem_context_block = f"\n\nSESSION CONTEXT (use this to resolve references like 'it', 'that', 'the supplement'):\n{ctx}\n"
 
     parse_prompt = f"""
 Extract calendar event details from this request: "{query}"
 Respond ONLY with valid JSON. No extra text, no markdown.
-
+{mem_context_block}
 If the user wants to CREATE or ADD or SCHEDULE an event, respond with:
 {{"action": "create", "title": "event title here", "date": "YYYY-MM-DD", "time": "HH:MM", "duration_hours": 1}}
 
@@ -113,7 +120,11 @@ Tomorrow is: {datetime.date.today() + datetime.timedelta(days=1)}
             # format time nicely for speech
             spoken_time = start_dt.strftime("%-I:%M %p")
             spoken_date = start_dt.strftime("%B %d")
-            return f"Done. {title} on {spoken_date} at {spoken_time}."
+            response = f"Done. {title} on {spoken_date} at {spoken_time}."
+            if memory is not None:
+                memory.set_result("calendar", response)
+                memory.add_turn("assistant", response, agent="calendar")
+            return response
 
         except Exception as e:
             print(f"[calendar] create error: {e}")
@@ -129,7 +140,11 @@ Tomorrow is: {datetime.date.today() + datetime.timedelta(days=1)}
             events = events_result.get('items', [])
 
             if not events:
-                return "You have no upcoming events."
+                response = "You have no upcoming events."
+                if memory is not None:
+                    memory.set_result("calendar", response)
+                    memory.add_turn("assistant", response, agent="calendar")
+                return response
 
             response = "Here are your next events. "
             for e in events:
@@ -144,6 +159,9 @@ Tomorrow is: {datetime.date.today() + datetime.timedelta(days=1)}
                 else:
                     formatted = datetime.datetime.strptime(start, "%Y-%m-%d").strftime("%B %d")
                 response += f"{e['summary']} on {formatted}. "
+            if memory is not None:
+                memory.set_result("calendar", response)
+                memory.add_turn("assistant", response, agent="calendar")
             return response
 
         except Exception as e:

@@ -63,6 +63,14 @@ class LiquidGlassDisplay:
         self.speed_hitboxes: dict[str, tuple] = {}
         self.agent_toggle_hitboxes: dict[str, tuple] = {}
         self.clear_history_hitbox = None
+        self.context_section_hitboxes: dict[str, tuple] = {}
+        self.context_open_section = "about"
+        self.context_documents: list[dict[str, str]] = []
+        self.context_add_hitbox = None
+        self.context_doc_delete_hitboxes: dict[int, tuple] = {}
+        self.context_clear_docs_hitbox = None
+        self.context_doc_title_entry: tk.Entry | None = None
+        self.context_doc_note_entry: tk.Entry | None = None
         self.reasoning_row_hitboxes: list[tuple[int, int, int, int]] = []
         self.reasoning_hover_index = -1
         self.username_entry: tk.Entry | None = None
@@ -72,6 +80,8 @@ class LiquidGlassDisplay:
         self._last_agent_status = (self.state.agent_focus, self.state.agent_phase)
         self._reasoning_initialized_for_turn = False
         self.research_status = ""
+        self.window_icon_tk = None
+        self.logo_tk = None
 
         # init toggle positions
         for agent in AGENT_ORDER:
@@ -82,11 +92,36 @@ class LiquidGlassDisplay:
         self.voice_thread.start()
 
         self.root.title("OpenSight - Technology that Adapts to You.")
+        if os.name == "nt":
+            try:
+                import ctypes
+                ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("OpenSight.DesktopApp")
+            except Exception as e:
+                print(f"[icon] could not set AppUserModelID: {e}")
         try:
             from PIL import Image, ImageTk
-            img = Image.open("opensight_icon.png")
-            icon = ImageTk.PhotoImage(img)
-            self.root.iconphoto(True, icon)
+            base_dir = os.path.dirname(os.path.abspath(__file__))
+            icon_png_path = os.path.join(base_dir, "opensight_icon.png")
+            ico_path = os.path.join(base_dir, "opensight_icon.ico")
+            img = Image.open(icon_png_path)
+            self.window_icon_tk = ImageTk.PhotoImage(img)
+            self.root.iconphoto(True, self.window_icon_tk)
+            self.root.after(0, lambda: self.root.iconphoto(True, self.window_icon_tk))
+
+            if os.name == "nt":
+                try:
+                    img.convert("RGBA").save(
+                        ico_path,
+                        format="ICO",
+                        sizes=[(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)],
+                    )
+                    self.root.iconbitmap(default=ico_path)
+                    self.root.wm_iconbitmap(ico_path)
+                except Exception as e:
+                    print(f"[icon] could not set iconbitmap: {e}")
+
+            logo_img = img.resize((36, 36), Image.LANCZOS)
+            self.logo_tk = ImageTk.PhotoImage(logo_img)
         except Exception as e:
             print(f"[icon] could not load: {e}")
 
@@ -256,6 +291,10 @@ class LiquidGlassDisplay:
         self.speed_hitboxes.clear()
         self.agent_toggle_hitboxes.clear()
         self.clear_history_hitbox = None
+        self.context_section_hitboxes.clear()
+        self.context_add_hitbox = None
+        self.context_doc_delete_hitboxes.clear()
+        self.context_clear_docs_hitbox = None
         self.reasoning_row_hitboxes = []
 
         self.root.configure(bg=theme["background"])
@@ -283,10 +322,19 @@ class LiquidGlassDisplay:
         self.bg_canvas.create_line(rail_x, 0, rail_x, h, fill=theme["rail_border"], width=2)
         self._draw_agent_rail(rail_x, w, h)
 
-        # wordmark
-        wordmark_x = max(180, int(main_w * 0.50))
-        self.bg_canvas.create_text(wordmark_x, 36, text="OPENSIGHT",
-                                    fill=theme["wordmark"], font=self.typo["display"], anchor="center")
+        # subtle left brand block
+        brand_x = 24
+        brand_y = 18
+        if self.logo_tk is not None:
+            self.bg_canvas.create_image(brand_x, brand_y, image=self.logo_tk, anchor="nw")
+        brand_text_x = brand_x + (46 if self.logo_tk is not None else 0)
+        self.bg_canvas.create_text(brand_text_x, brand_y + 2, text="OpenSight",
+                                   fill=self._lerp_color(theme["wordmark"], theme["muted"], 0.35),
+                                   font=(self.font_ui, 18, "bold"), anchor="nw")
+        self.bg_canvas.create_text(brand_text_x, brand_y + 30,
+                                   text="Technology that Adapts to You",
+                                   fill=theme.get("meta", theme["muted"]),
+                                   font=self.typo["mono_micro"], anchor="nw")
 
         # orb
         orb_r = max(32, min(52, main_w // 20))
@@ -452,14 +500,15 @@ class LiquidGlassDisplay:
         theme = self._theme()
         cl, cr = rail_x + 14, w - 14
         tab_top, tab_h = 12, 28
-        tab_mid = (cl + cr) // 2
+        tab_w = (cr - cl - 8) // 3
         tabs = {
-            "agents":   (cl, tab_top, tab_mid-3, tab_top+tab_h),
-            "settings": (tab_mid+3, tab_top, cr, tab_top+tab_h),
+            "agents":   (cl, tab_top, cl + tab_w, tab_top+tab_h),
+            "settings": (cl + tab_w + 4, tab_top, cl + (tab_w * 2) + 4, tab_top+tab_h),
+            "context":  (cl + (tab_w * 2) + 8, tab_top, cr, tab_top+tab_h),
         }
         self.tab_hitboxes = tabs
 
-        for key, label in (("agents", "Agents"), ("settings", "Settings")):
+        for key, label in (("agents", "Agents"), ("settings", "Settings"), ("context", "Context")):
             x1, y1, x2, y2 = tabs[key]
             active = self.state.active_right_tab == key
             self._rounded_rect(x1, y1, x2, y2, radius=10,
@@ -470,21 +519,29 @@ class LiquidGlassDisplay:
                                        font=self.typo["label"], anchor="n")
 
         if self.state.active_right_tab == "settings":
+            self._destroy_context_doc_inputs()
             self._draw_settings_panel(cl, cr, h)
             return
 
+        if self.state.active_right_tab == "context":
+            self._destroy_username_entry()
+            self._draw_context_panel(cl, cr, h)
+            return
+
         self._destroy_username_entry()
+        self._destroy_context_doc_inputs()
         self.bg_canvas.create_text(rail_x+18, 50, text=self._caps("Brain / Agents"),
                                    fill=theme["muted"], font=self.typo["label"], anchor="nw")
         if self.state.username:
             self.bg_canvas.create_text(rail_x+18, 66, text=f"User: {self.state.username}",
                                        fill=theme.get("meta", theme["muted"]), font=self.typo["mono_micro"], anchor="nw")
 
-        chain_top = h - 225
-        chain_bottom = h - 30
+        reason_panel_height = 292
+        chain_bottom = h - 28
+        chain_top = chain_bottom - reason_panel_height
         y_cursor = 84
         for agent in AGENT_ORDER:
-            yt, yb = y_cursor, y_cursor + 40
+            yt, yb = y_cursor, y_cursor + 48
             if yb > chain_top - 10:
                 break
             self.agent_hitboxes[agent] = (cl, yt, cr, yb)
@@ -498,27 +555,55 @@ class LiquidGlassDisplay:
                     theme["panel"], theme["panel_border"],
                     theme["muted"], theme["muted"], theme["muted"])
             elif active:
+                # single soft glow halo
                 glow = self._agent_glow_color(agent)
-                for gp in (8, 5, 2):
-                    self._rounded_rect(cl-gp, yt-gp, cr+gp, yb+gp, radius=14, fill=glow, outline="")
+                self._rounded_rect(cl-7, yt-7, cr+7, yb+7, radius=17, fill=glow, outline="")
+                # slightly lift fill toward accent for active card
+                fill = self._lerp_color(fill, accent, 0.12)
 
             if flash > 0:
                 fill = self._lerp_color(fill, accent, flash / 8.0)
 
             self._rounded_rect(cl, yt, cr, yb, radius=12, fill=fill, outline=outline, width=1)
 
-            dr = 4 if not active else 5 + (self.state.pulse_step % 4)
-            dx = cl + 16
-            self.bg_canvas.create_oval(dx-dr, yt+18-dr, dx+dr, yt+18+dr,
-                                       fill=theme["muted"] if disabled else accent, outline="")
-            self.bg_canvas.create_text(cl+32, yt+8, text=agent,
+            # 4 px colored left accent bar
+            bar_color = theme["muted"] if disabled else accent
+            self.bg_canvas.create_rectangle(cl, yt + 10, cl + 4, yb - 10,
+                                            fill=bar_color, outline="")
+
+            # status dot (larger, pulsing when active)
+            dy_center = yt + 24
+            dx = cl + 20
+            dr = 5 if not active else 6 + (self.state.pulse_step % 3)
+            dot_color = theme["muted"] if disabled else accent
+            self.bg_canvas.create_oval(dx-dr, dy_center-dr, dx+dr, dy_center+dr,
+                                       fill=dot_color, outline="")
+            if active and not disabled:
+                self.bg_canvas.create_oval(dx-2, dy_center-2, dx+2, dy_center+2,
+                                           fill="#ffffff", outline="")
+
+            # agent name
+            self.bg_canvas.create_text(cl + 34, yt + 9, text=agent,
                                        fill=title_color, font=self.typo["mono_label"], anchor="nw")
+
+            # detail line + active badge
             detail = self._agent_detail(agent)
-            detail_styled = detail.upper() + " ↗" if active and not disabled else detail
-            self.bg_canvas.create_text(cl+32, yt+23, text=detail_styled,
-                                       fill=accent if (active and not disabled) else detail_color,
-                                       font=self.typo["micro"],
-                                       anchor="nw")
+            if active and not disabled:
+                self.bg_canvas.create_text(cl + 34, yt + 27, text=detail.upper(),
+                                           fill=accent, font=self.typo["micro"], anchor="nw")
+                # "ACTIVE ↗" pill in top-right of card
+                bx2 = cr - 7
+                bx1 = bx2 - 46
+                by1, by2 = yt + 7, yt + 21
+                self._rounded_rect(bx1, by1, bx2, by2, radius=5,
+                                   fill=self._lerp_color(fill, accent, 0.20), outline=accent, width=1)
+                self.bg_canvas.create_text((bx1 + bx2) // 2, by1 + 2,
+                                           text="ACTIVE ↗",
+                                           fill=accent, font=self.typo["mono_tiny"], anchor="n")
+            else:
+                self.bg_canvas.create_text(cl + 34, yt + 27, text=detail,
+                                           fill=detail_color, font=self.typo["micro"], anchor="nw")
+
             y_cursor = yb + 8
 
             if agent == "RESEARCH" and self.state.research_panel_open:
@@ -666,6 +751,255 @@ class LiquidGlassDisplay:
         self.bg_canvas.create_text(mid, h-16, text="OpenSight v1.0",
                                    fill=theme["panel_border"], font=self.typo["mono_tiny"], anchor="center")
 
+    def _draw_context_panel(self, left, right, h):
+        theme = self._theme()
+        mid = (left + right) // 2
+
+        self.bg_canvas.create_text(mid, 48, text=self._caps("Context"),
+                                   fill=theme["accent"], font=self.typo["label"], anchor="center")
+        self.bg_canvas.create_text(mid, 64, text="Live session context · not saved",
+                                   fill=theme.get("meta", theme["muted"]), font=self.typo["mono_micro"], anchor="center")
+
+        sections = [
+            ("about", "About You"),
+            ("recent", "Recent Context"),
+            ("documents", f"Documents ({len(self.context_documents)})"),
+        ]
+
+        y = 84
+        body_padding = 12
+        section_spacing = 10
+
+        for key, title in sections:
+            is_open = self.context_open_section == key
+            header_h = 30
+            x1, x2 = left + 8, right - 8
+            self.context_section_hitboxes[key] = (x1, y, x2, y + header_h)
+
+            self._rounded_rect(
+                x1, y, x2, y + header_h, radius=9,
+                fill=theme["tab_active"] if is_open else theme["panel"],
+                outline=theme["tab_border_active"] if is_open else theme["panel_border"],
+            )
+            self.bg_canvas.create_text(x1 + 12, y + 7, text=title,
+                                       fill=theme["text"], font=self.typo["label"], anchor="nw")
+            self.bg_canvas.create_text(x2 - 10, y + 7, text="▾" if is_open else "▸",
+                                       fill=theme["muted"], font=self.typo["label"], anchor="ne")
+
+            y += header_h + 6
+
+            if is_open:
+                max_body_h = max(100, (h - 44) - y)
+                body_h = min(282, max_body_h)
+
+                self._rounded_rect(x1, y, x2, y + body_h, radius=11,
+                                   fill=theme["panel"], outline=theme["panel_border"])
+
+                if key == "documents":
+                    self._draw_documents_section_content(x1, y, x2, body_h, theme)
+                else:
+                    lines = self._context_section_lines(key)
+                    line_h = 17
+                    max_lines = max(3, (body_h - (body_padding * 2)) // line_h)
+                    render_lines = lines[:max_lines]
+                    if len(lines) > max_lines:
+                        render_lines[-1] = "…"
+
+                    self.bg_canvas.create_text(
+                        x1 + 12,
+                        y + body_padding,
+                        text="\n".join(render_lines),
+                        fill=theme["text"],
+                        font=self.typo["micro"],
+                        anchor="nw",
+                        width=max(90, (x2 - x1) - 24),
+                        justify="left",
+                    )
+
+                y += body_h + section_spacing
+
+            if y > h - 70:
+                break
+
+        self.bg_canvas.create_text(mid, h-16, text="Single-open view",
+                                   fill=theme.get("meta", theme["muted"]), font=self.typo["mono_tiny"], anchor="center")
+
+    def _draw_documents_section_content(self, x1: int, y: int, x2: int, body_h: int, theme: dict) -> None:
+        pad = 10
+        inner_w = max(100, (x2 - x1) - (pad * 2))
+        cursor_y = y + pad
+
+        self._ensure_context_doc_inputs(theme)
+
+        self.bg_canvas.create_text(x1 + pad, cursor_y, text="ADD DOCUMENT",
+                                   fill=theme["muted"], font=self.typo["mono_label"], anchor="nw")
+        cursor_y += 16
+
+        self.bg_canvas.create_text(x1 + pad, cursor_y, text="Title",
+                                   fill=theme["muted"], font=self.typo["mono_tiny"], anchor="nw")
+        cursor_y += 12
+        self.bg_canvas.create_window(x1 + pad, cursor_y, width=inner_w - 152, height=22,
+                                     anchor="nw", window=self.context_doc_title_entry)
+
+        add_x1 = x2 - pad - 66
+        add_y1 = cursor_y
+        add_x2 = x2 - pad
+        add_y2 = cursor_y + 22
+        self.context_add_hitbox = (add_x1, add_y1, add_x2, add_y2)
+        self._rounded_rect(add_x1, add_y1, add_x2, add_y2, radius=7,
+                           fill=theme["btn_bg"], outline=theme["btn_border"])
+        self.bg_canvas.create_text((add_x1 + add_x2) // 2, add_y1 + 5, text="Add",
+                                   fill=theme["btn_text"], font=self.typo["label_soft"], anchor="n")
+
+        clear_x1 = add_x1 - 72
+        clear_x2 = add_x1 - 6
+        self.context_clear_docs_hitbox = (clear_x1, add_y1, clear_x2, add_y2)
+        self._rounded_rect(clear_x1, add_y1, clear_x2, add_y2, radius=7,
+                           fill=theme["panel"], outline=theme["panel_border"])
+        self.bg_canvas.create_text((clear_x1 + clear_x2) // 2, add_y1 + 5, text="Clear",
+                                   fill=theme["muted"], font=self.typo["label_soft"], anchor="n")
+
+        cursor_y += 30
+        self.bg_canvas.create_text(x1 + pad, cursor_y, text="Summary / Context",
+                                   fill=theme["muted"], font=self.typo["mono_tiny"], anchor="nw")
+        cursor_y += 12
+        self.bg_canvas.create_window(x1 + pad, cursor_y, width=inner_w, height=22,
+                                     anchor="nw", window=self.context_doc_note_entry)
+
+        cursor_y += 34
+        self.bg_canvas.create_line(x1 + pad, cursor_y, x2 - pad, cursor_y, fill=theme["panel_border"], width=1)
+        cursor_y += 8
+
+        self.bg_canvas.create_text(x1 + pad, cursor_y, text="YOUR DOCUMENTS",
+                                   fill=theme["muted"], font=self.typo["mono_label"], anchor="nw")
+        cursor_y += 16
+
+        if not self.context_documents:
+            self.bg_canvas.create_text(x1 + pad, cursor_y,
+                                       text="No documents yet. Type above and press Add.",
+                                       fill=theme["text"], font=self.typo["micro"], anchor="nw",
+                                       width=inner_w, justify="left")
+            return
+
+        max_rows = 4
+        start_idx = max(0, len(self.context_documents) - max_rows)
+        visible_indices = list(range(start_idx, len(self.context_documents)))[::-1]
+
+        for display_pos, doc_idx in enumerate(visible_indices, 1):
+            if cursor_y > y + body_h - 44:
+                break
+
+            doc = self.context_documents[doc_idx]
+            card_x1, card_x2 = x1 + pad, x2 - pad
+            card_y1, card_y2 = cursor_y, cursor_y + 40
+            self._rounded_rect(card_x1, card_y1, card_x2, card_y2, radius=8,
+                               fill=self._lerp_color(theme["panel"], theme["tab_active"], 0.25),
+                               outline=theme["panel_border"])
+
+            title = (doc.get("title") or f"Context {display_pos}")[:36]
+            summary = (doc.get("summary") or "")[:62]
+
+            self.bg_canvas.create_text(card_x1 + 8, card_y1 + 5, text=f"{display_pos}. {title}",
+                                       fill=theme["text"], font=self.typo["label"], anchor="nw")
+            if summary:
+                self.bg_canvas.create_text(card_x1 + 10, card_y1 + 22, text=summary,
+                                           fill=theme.get("text_secondary", theme["muted"]),
+                                           font=self.typo["mono_tiny"], anchor="nw",
+                                           width=max(80, card_x2 - card_x1 - 84), justify="left")
+
+            del_x1, del_x2 = card_x2 - 58, card_x2 - 8
+            del_y1, del_y2 = card_y1 + 8, card_y1 + 28
+            self.context_doc_delete_hitboxes[doc_idx] = (del_x1, del_y1, del_x2, del_y2)
+            self._rounded_rect(del_x1, del_y1, del_x2, del_y2, radius=6,
+                               fill=theme["panel"], outline=theme["panel_border"])
+            self.bg_canvas.create_text((del_x1 + del_x2) // 2, del_y1 + 4, text="Delete",
+                                       fill=theme["muted"], font=self.typo["mono_tiny"], anchor="n")
+
+            cursor_y += 46
+
+    def _context_section_lines(self, key: str) -> list[str]:
+        s = self.state
+        if key == "about":
+            name = s.username.strip() if s.username else "Not set yet"
+            speaking_mode = "Listening" if s.listening else "Idle"
+            return [
+                f"NAME: {name}",
+                f"VOICE MODE: {speaking_mode}",
+                f"SPEED: {self.voice_speed.capitalize()}",
+                "Tip: set your name in Settings > User Name.",
+            ]
+
+        if key == "recent":
+            if not s.transcript_history:
+                return [
+                    "No recent context yet.",
+                    "Start speaking and your conversation will appear here.",
+                ]
+            turns = s.transcript_history[-6:]
+            return [f"• {entry[:68]}" for entry in turns]
+
+        return []
+
+    def _ensure_context_doc_inputs(self, theme: dict) -> None:
+        if self.context_doc_title_entry is None:
+            self.context_doc_title_entry = tk.Entry(self.bg_canvas, font=self.typo["micro"], relief="flat")
+            self.context_doc_title_entry.bind("<Return>", self._add_context_document_from_inputs)
+
+        if self.context_doc_note_entry is None:
+            self.context_doc_note_entry = tk.Entry(self.bg_canvas, font=self.typo["micro"], relief="flat")
+            self.context_doc_note_entry.bind("<Return>", self._add_context_document_from_inputs)
+
+        for entry in (self.context_doc_title_entry, self.context_doc_note_entry):
+            entry.configure(
+                bg=theme["input_bg"], fg=theme["input_text"],
+                insertbackground=theme["input_text"],
+                highlightthickness=1, highlightbackground=theme["input_border"],
+                highlightcolor=theme["accent"], relief="flat", bd=0,
+            )
+
+    def _destroy_context_doc_inputs(self):
+        if self.context_doc_title_entry is not None:
+            self.context_doc_title_entry.destroy()
+            self.context_doc_title_entry = None
+        if self.context_doc_note_entry is not None:
+            self.context_doc_note_entry.destroy()
+            self.context_doc_note_entry = None
+
+    def _add_context_document_from_inputs(self, event=None):
+        title = (self.context_doc_title_entry.get().strip() if self.context_doc_title_entry else "")
+        summary = (self.context_doc_note_entry.get().strip() if self.context_doc_note_entry else "")
+
+        if not title and not summary:
+            return "break" if event is not None else None
+
+        if not title:
+            title = f"Context {len(self.context_documents) + 1}"
+
+        self.context_documents.append({
+            "title": title[:60],
+            "summary": summary[:220],
+        })
+        if len(self.context_documents) > 24:
+            self.context_documents = self.context_documents[-24:]
+
+        if self.context_doc_title_entry is not None:
+            self.context_doc_title_entry.delete(0, tk.END)
+        if self.context_doc_note_entry is not None:
+            self.context_doc_note_entry.delete(0, tk.END)
+
+        self.redraw()
+        return "break" if event is not None else None
+
+    def _delete_context_document(self, index: int) -> None:
+        if 0 <= index < len(self.context_documents):
+            self.context_documents.pop(index)
+            self.redraw()
+
+    def _clear_context_documents(self) -> None:
+        if self.context_documents:
+            self.context_documents = []
+            self.redraw()
+
     def _ensure_username_entry(self, x, y, width):
         theme = self._theme()
         if self.username_entry is None:
@@ -703,23 +1037,37 @@ class LiquidGlassDisplay:
     def _agent_card_colors(self, agent, active):
         if self.state.ui_mode == "dark":
             palette = {
-                "BRAIN":    ("#0d2a42", "#1e4a6e", "#6aafd6", "#4a7a9b", "#49a1e6"),
-                "SHOPPING": ("#0d2e1a", "#1a4a28", "#6ab88a", "#4a8060", "#56b97a"),
-                "CALENDAR": ("#2e2000", "#4a3400", "#c8922a", "#8a6830", "#e0a238"),
-                "RESEARCH": ("#1a0d38", "#2e1a5a", "#9a7ad6", "#6a5090", "#8b6be8"),
-                "GENERAL":  ("#0d1e2e", "#1a3040", "#7aaabb", "#4a6a7a", "#7aa7c2"),
+                "BRAIN":    ("#173149", "#2f5574", "#8eb9d4", "#7290a3", "#7fb7de"),
+                "SHOPPING": ("#173427", "#2d5a43", "#9bcfb4", "#7f9f90", "#89cfa6"),
+                "CALENDAR": ("#3a2f18", "#6a5732", "#d8bf89", "#b09a6f", "#d8b471"),
+                "RESEARCH": ("#2a2244", "#4f4272", "#b7a8da", "#9688ba", "#a993dd"),
+                "GENERAL":  ("#1e3342", "#395a6f", "#9dc3d6", "#809eaf", "#8cb9ce"),
             }
-            inactive = ("#142333", "#243d52", "#4a7088", "#3a5a70", "#3a5a70")
+            inactive = {
+                "BRAIN":    ("#162c3e", "#2d4b64", "#86adc7", "#6f8a9f", "#7fb7de"),
+                "SHOPPING": ("#162f24", "#2a503d", "#92c4aa", "#759788", "#89cfa6"),
+                "CALENDAR": ("#352b18", "#5f4f2e", "#ccb57f", "#a7936a", "#d8b471"),
+                "RESEARCH": ("#27203f", "#483d68", "#ad9fd1", "#8f83b2", "#a993dd"),
+                "GENERAL":  ("#1c2f3d", "#34556a", "#94bbcf", "#7897a9", "#8cb9ce"),
+            }
         else:
             palette = {
-                "BRAIN":    ("#d8ecff", "#7cb7e6", "#214f67", "#4f7488", "#49a1e6"),
-                "SHOPPING": ("#e2f5ea", "#89cfa0", "#265a3d", "#587569", "#56b97a"),
-                "CALENDAR": ("#fff0d6", "#e3b15a", "#705117", "#8c7854", "#e0a238"),
-                "RESEARCH": ("#e7e0ff", "#b19ae8", "#4f3e7d", "#72688f", "#8b6be8"),
-                "GENERAL":  ("#e3edf4", "#9eb4c4", "#334a5d", "#63798a", "#7aa7c2"),
+                "BRAIN":    ("#e6f1fb", "#b7d2e8", "#2d5368", "#68859a", "#83b7da"),
+                "SHOPPING": ("#eaf6ef", "#b9dcc6", "#2e5a43", "#6f8f7e", "#90ceab"),
+                "CALENDAR": ("#fff4e3", "#e8d0a4", "#6d5629", "#9e8759", "#d7b778"),
+                "RESEARCH": ("#f1ecfb", "#ccbce9", "#56437f", "#8373a8", "#a994d8"),
+                "GENERAL":  ("#eaf2f7", "#bfd1dd", "#375266", "#708999", "#91b8cb"),
             }
-            inactive = ("#edf1f4", "#c8d3dc", "#6d7f8d", "#8a99a5", "#a7b4bf")
-        return palette.get(agent, inactive) if active else inactive
+            inactive = {
+                "BRAIN":    ("#edf4fb", "#c3d9eb", "#3a5c70", "#7591a4", "#83b7da"),
+                "SHOPPING": ("#eef8f2", "#c4e0cf", "#3a624b", "#789385", "#90ceab"),
+                "CALENDAR": ("#fff6e8", "#edd8b1", "#755e2f", "#a58e5f", "#d7b778"),
+                "RESEARCH": ("#f4f0fc", "#d3c5ec", "#5e4a85", "#8a7bad", "#a994d8"),
+                "GENERAL":  ("#edf4f8", "#c7d7e1", "#415a6d", "#7a91a0", "#91b8cb"),
+            }
+        if active:
+            return palette.get(agent, ("#eaf2f8", "#bfd5e2", "#3f5b6b", "#6f8896", "#83b7da"))
+        return inactive.get(agent, ("#edf2f5", "#cbd6df", "#586f7e", "#8798a6", "#91b8cb"))
 
     # ── reasoning chain ──
 
@@ -804,78 +1152,111 @@ class LiquidGlassDisplay:
     def _draw_reasoning_chain(self, left, right, top, bottom):
         theme = self._theme()
         pulse = (math.sin(time.monotonic() * 6.0) + 1.0) / 2.0
+
+        # panel shadow + glass body
         self._rounded_rect(left + 1, top + 3, right + 1, bottom + 3, radius=14,
                            fill=theme["reason_shadow"], outline="")
         self._rounded_rect(left, top, right, bottom, radius=14,
                            fill=theme["reason_panel"], outline=theme["reason_edge"])
-        self._rounded_rect(left + 1, top + 1, right - 1, top + 26, radius=12,
-                           fill=self._lerp_color(theme["reason_panel"], theme["reason_glass_hi"], 0.18), outline="")
+        self._rounded_rect(left + 1, top + 1, right - 1, top + 30, radius=12,
+                           fill=self._lerp_color(theme["reason_panel"], theme["reason_glass_hi"], 0.22), outline="")
 
-        self.bg_canvas.create_text(left + 12, top + 9, text=self._caps("Reasoning Flow"),
+        # header: title + live step counter
+        completed_count = sum(1 for st in self.state.reasoning_steps if st["status"] == "complete")
+        total_steps = len(self.state.reasoning_steps)
+        self.bg_canvas.create_text(left + 12, top + 10, text=self._caps("Reasoning Flow"),
                                    fill=theme["reason_title"], font=self.typo["label"], anchor="nw")
-        self.bg_canvas.create_text(right - 12, top + 10, text="Live",
-                       fill=theme["reason_subtitle"], font=self.typo["mono_tiny"], anchor="ne")
-        self.bg_canvas.create_line(left + 10, top + 30, right - 10, top + 30,
+        counter_color = theme["reason_active"] if completed_count > 0 else theme["reason_subtitle"]
+        self.bg_canvas.create_text(right - 10, top + 10,
+                                   text=f"{completed_count} / {total_steps}",
+                                   fill=counter_color, font=self.typo["mono_tiny"], anchor="ne")
+        self.bg_canvas.create_line(left + 10, top + 32, right - 10, top + 32,
                                    fill=theme["reason_connector"], width=1)
 
-        node_x = left + 20
-        title_x = left + 36
-        start_y = top + 50
-        step_gap = 40
+        node_x = left + 22
+        title_x = left + 40
+        start_y = top + 54
+        step_gap = 44
 
-        completed_count = sum(1 for st in self.state.reasoning_steps if st["status"] == "complete")
+        # vertical rail: dim base + bright progress fill
         progress_y = start_y + max(0, completed_count - 1) * step_gap
-        if self.state.reasoning_active_index >= 0 and self.state.reasoning_active_index < len(self.state.reasoning_steps):
+        if self.state.reasoning_active_index >= 0 and self.state.reasoning_active_index < total_steps:
             i = self.state.reasoning_active_index
             elapsed = time.monotonic() - self.state.reasoning_transition_at[i]
             progress_y = start_y + i * step_gap + min(step_gap * 0.55, elapsed * 70)
         rail_top = start_y
-        rail_bottom = start_y + step_gap * (len(self.state.reasoning_steps) - 1)
+        rail_bottom = start_y + step_gap * (total_steps - 1)
         self.bg_canvas.create_line(node_x, rail_top, node_x, rail_bottom,
-                                   fill=theme["reason_connector"], width=3)
+                                   fill=theme["reason_connector"], width=2)
         self.bg_canvas.create_line(node_x, rail_top, node_x, min(rail_bottom, int(progress_y)),
-                                   fill=theme["reason_active"], width=3)
+                                   fill=theme["reason_active"], width=4)
 
         for i, step in enumerate(self.state.reasoning_steps):
             y = start_y + i * step_gap
-            row_top = y - 10
-            row_bottom = y + 16
+            row_top = y - 14
+            row_bottom = y + 22
             self.reasoning_row_hitboxes.append((left + 10, row_top, right - 10, row_bottom))
             hovered = self.reasoning_hover_index == i
             status = step["status"]
             age = time.monotonic() - self.state.reasoning_transition_at[i]
 
-            if hovered:
+            # row background: always-on highlight for active, hover-only for others
+            if status == "active":
                 self._rounded_rect(left + 10, row_top, right - 10, row_bottom, radius=8,
-                                   fill=self._lerp_color(theme["reason_panel"], theme["reason_glass_hi"], 0.14), outline="")
+                                   fill=self._lerp_color(theme["reason_panel"], theme["reason_active"], 0.09),
+                                   outline=self._lerp_color(theme["reason_panel"], theme["reason_active"], 0.35),
+                                   width=1)
+            elif hovered:
+                self._rounded_rect(left + 10, row_top, right - 10, row_bottom, radius=8,
+                                   fill=self._lerp_color(theme["reason_panel"], theme["reason_glass_hi"], 0.14),
+                                   outline="")
 
+            # node rendering
             if status == "complete":
-                node_fill = theme["reason_complete"]
-                node_outline = theme["reason_complete"]
-                self.bg_canvas.create_oval(node_x - 6, y - 6, node_x + 6, y + 6, fill=node_fill, outline=node_outline)
+                self.bg_canvas.create_oval(node_x - 8, y - 8, node_x + 8, y + 8,
+                                           fill=theme["reason_complete"], outline=theme["reason_complete"])
                 pop = 1.0 + max(0.0, 0.4 - age) * 1.8
-                check_size = 8 if pop < 1.15 else 9
+                check_size = 9 if pop < 1.15 else 10
                 self.bg_canvas.create_text(node_x, y, text="✓", fill="#ffffff",
                                            font=(self.font_mono, check_size, "bold"), anchor="center")
             elif status == "active":
-                glow_r = 9 + int(3 * pulse)
+                # outer pulsing ring
+                glow_r = 11 + int(4 * pulse)
                 self.bg_canvas.create_oval(node_x - glow_r, y - glow_r, node_x + glow_r, y + glow_r,
-                                           fill="", outline=theme["reason_active"], width=1)
-                self.bg_canvas.create_oval(node_x - 6, y - 6, node_x + 6, y + 6,
+                                           fill="", outline=theme["reason_active"], width=2)
+                # filled node
+                self.bg_canvas.create_oval(node_x - 8, y - 8, node_x + 8, y + 8,
                                            fill=theme["reason_active"], outline=theme["reason_active"])
-                self.bg_canvas.create_oval(node_x - 2, y - 2, node_x + 2, y + 2,
+                # inner white core
+                self.bg_canvas.create_oval(node_x - 3, y - 3, node_x + 3, y + 3,
                                            fill="#ffffff", outline="")
             else:
-                self.bg_canvas.create_oval(node_x - 6, y - 6, node_x + 6, y + 6,
-                                           fill=theme["reason_panel"], outline=theme["reason_pending_outline"], width=2)
+                # pending: outline circle with step number inside
+                self.bg_canvas.create_oval(node_x - 8, y - 8, node_x + 8, y + 8,
+                                           fill=theme["reason_panel"],
+                                           outline=theme["reason_pending_outline"], width=2)
+                self.bg_canvas.create_text(node_x, y, text=str(i + 1),
+                                           fill=theme["reason_pending_outline"],
+                                           font=(self.font_mono, 8, "bold"), anchor="center")
 
-            title_color = theme["reason_row_text"] if not hovered else self._lerp_color(theme["reason_row_text"], theme["reason_active"], 0.35)
-            subtext_color = theme["reason_row_subtext"]
+            # text colors per status
+            if status == "active":
+                title_color = theme["reason_active"]
+                subtext_color = self._lerp_color(theme["reason_row_subtext"], theme["reason_active"], 0.35)
+            elif status == "complete":
+                title_color = (self._lerp_color(theme["reason_row_text"], theme["reason_active"], 0.35)
+                               if hovered else theme["reason_row_text"])
+                subtext_color = theme["reason_row_subtext"]
+            else:
+                title_color = (self._lerp_color(theme["reason_row_subtext"], theme["reason_active"], 0.35)
+                               if hovered else theme["reason_row_subtext"])
+                subtext_color = theme["reason_row_subtext"]
+
             label = step["label"][:28]
             summary = step.get("summary", "")[:42]
-            self.bg_canvas.create_text(title_x, y - 7, text=label,
+            self.bg_canvas.create_text(title_x, y - 10, text=label,
                                        fill=title_color, font=self.typo["section"], anchor="nw")
-            self.bg_canvas.create_text(title_x, y + 7, text=summary,
+            self.bg_canvas.create_text(title_x, y + 10, text=summary,
                                        fill=subtext_color, font=(self.font_ui, 10, "normal"), anchor="nw",
                                        width=max(90, right - title_x - 10), justify="left")
 
@@ -929,6 +1310,25 @@ class LiquidGlassDisplay:
                 return
             return
 
+        if self.state.active_right_tab == "context":
+            if self.context_add_hitbox and self._point_in_box(event.x, event.y, self.context_add_hitbox):
+                self._add_context_document_from_inputs()
+                return
+            if self.context_clear_docs_hitbox and self._point_in_box(event.x, event.y, self.context_clear_docs_hitbox):
+                self._clear_context_documents()
+                return
+            for doc_idx, bbox in self.context_doc_delete_hitboxes.items():
+                if self._point_in_box(event.x, event.y, bbox):
+                    self._delete_context_document(doc_idx)
+                    return
+            for section, bbox in self.context_section_hitboxes.items():
+                if self._point_in_box(event.x, event.y, bbox):
+                    if self.context_open_section != section:
+                        self.context_open_section = section
+                        self.redraw()
+                    return
+            return
+
         for agent, bbox in self.agent_hitboxes.items():
             if self._point_in_box(event.x, event.y, bbox):
                 self.state.agent_focus = agent
@@ -961,6 +1361,11 @@ class LiquidGlassDisplay:
     def _clear_history(self):
         self.state.transcript_history = []
         self.state.research_history = []
+        self.context_documents = []
+        if self.context_doc_title_entry is not None:
+            self.context_doc_title_entry.delete(0, tk.END)
+        if self.context_doc_note_entry is not None:
+            self.context_doc_note_entry.delete(0, tk.END)
         self.state.last_user_text = ""
         self.state.last_ai_text = ""
         self.ai_render_text = ""
@@ -1280,6 +1685,7 @@ class LiquidGlassDisplay:
     def close_app(self):
         self._commit_username()
         self._destroy_username_entry()
+        self._destroy_context_doc_inputs()
         self._stop_thinking()
         self._stop_speaking_visual()
         for job in [self.ai_animation_job, self.gradient_job, self.mic_level_job, self.toggle_anim_job]:
@@ -1301,6 +1707,13 @@ class LiquidGlassDisplay:
         self.redraw()
 
 def main():
+    if os.name == "nt":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("OpenSight.DesktopApp")
+        except Exception as e:
+            print(f"[icon] could not set AppUserModelID: {e}")
+
     root = tk.Tk()
     app = LiquidGlassDisplay(root)
     root.protocol("WM_DELETE_WINDOW", app.close_app)

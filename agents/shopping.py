@@ -224,12 +224,16 @@ def _build_response(results: list) -> str:
         )
 
 
-async def run_shopping_agent(query: str, shopping_memory: dict | None = None) -> tuple[str, dict]:
+async def run_shopping_agent(query: str, shopping_memory: dict | None = None, memory=None) -> tuple[str, dict]:
     global _active_browser
     shopping_memory = shopping_memory or {"last_query": "", "last_results": []}
 
     if _is_followup_query(query) and shopping_memory.get("last_results"):
-        return _handle_followup_query(query, shopping_memory), shopping_memory
+        response = _handle_followup_query(query, shopping_memory)
+        if memory is not None:
+            memory.set_result("shopping", response)
+            memory.add_turn("assistant", response, agent="shopping")
+        return response, shopping_memory
 
     close_active_browser()
 
@@ -248,7 +252,11 @@ async def run_shopping_agent(query: str, shopping_memory: dict | None = None) ->
 
     if not results:
         result_holder["close"] = True
-        return "I couldn't find anything for that. Try rephrasing?", shopping_memory
+        response = "I couldn't find anything for that. Try rephrasing?"
+        if memory is not None:
+            memory.set_result("shopping", response)
+            memory.add_turn("assistant", response, agent="shopping")
+        return response, shopping_memory
 
     budget = _extract_budget(query)
     if budget:
@@ -258,13 +266,18 @@ async def run_shopping_agent(query: str, shopping_memory: dict | None = None) ->
         else:
             cheapest = min(results, key=lambda r: r["price_val"] or 9999)
             result_holder["close"] = True
-            return (
+            response = (
                 f"Nothing under ${int(budget)}, sorry. "
                 f"Closest I found is the {_shorten_title(cheapest['title'])} at {cheapest['price']}."
-            ), {
+            )
+            memory_out = {
                 "last_query": _clean_query(query),
                 "last_results": [{"title": cheapest["title"], "price": cheapest["price"], "url": cheapest.get("url")}],
             }
+            if memory is not None:
+                memory.set_result("shopping", response)
+                memory.add_turn("assistant", response, agent="shopping")
+            return response, memory_out
     else:
         results = results[:3]
 
@@ -278,4 +291,8 @@ async def run_shopping_agent(query: str, shopping_memory: dict | None = None) ->
         ],
     }
 
-    return _build_response(results), memory_update
+    response = _build_response(results)
+    if memory is not None:
+        memory.set_result("shopping", response)
+        memory.add_turn("assistant", response, agent="shopping")
+    return response, memory_update

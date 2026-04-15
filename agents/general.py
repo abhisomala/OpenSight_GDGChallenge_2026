@@ -53,7 +53,7 @@ async def _search_web(query: str) -> str:
         return ""
 
 
-async def run_general_agent(query: str, history: list = []) -> str:
+async def run_general_agent(query: str, history: list = [], memory=None) -> str:
     # search the web for current info
     search_results = await _search_web(query)
 
@@ -72,10 +72,21 @@ async def run_general_agent(query: str, history: list = []) -> str:
         for turn in history:
             history_text += f"User: {turn['user']}\nAssistant: {turn['assistant']}\n"
 
+    # inject shared memory context so cross-agent references resolve
+    mem_context_block = ""
+    if memory is not None:
+        ctx = memory.context_for_prompt()
+        if ctx and ctx != "No prior context.":
+            mem_context_block = f"\n\nSESSION CONTEXT:\n{ctx}\n"
+
     # build prompt with search results
     if search_results:
-        prompt = f"{SYSTEM_PROMPT}{history_text}\n\nSearch results for '{query}':\n{search_results}\n\nUser: {query}"
+        prompt = f"{SYSTEM_PROMPT}{mem_context_block}{history_text}\n\nSearch results for '{query}':\n{search_results}\n\nUser: {query}"
     else:
-        prompt = f"{SYSTEM_PROMPT}{history_text}\n\nUser: {query}\n\n(No web results available, use your training knowledge.)"
+        prompt = f"{SYSTEM_PROMPT}{mem_context_block}{history_text}\n\nUser: {query}\n\n(No web results available, use your training knowledge.)"
 
-    return await generate_with_fallback(prompt)
+    result = await generate_with_fallback(prompt)
+    if memory is not None:
+        memory.set_result("general", result)
+        memory.add_turn("assistant", result, agent="general")
+    return result

@@ -11,6 +11,7 @@ from agents.shopping import close_active_browser as close_shopping_browser
 from agents.research import close_active_browser as close_research_browser
 from agents.calendar import close_active_browser as close_calendar_browser
 from dotenv import load_dotenv
+from memory import SessionMemory
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -65,20 +66,20 @@ async def send_status(ws: WebSocket, agent: str, state: str, detail: str = "") -
     }))
 
 
-async def run_agent(intent: str, query: str, history: list, shopping_memory: dict, last_intent: str = "", status_cb=None) -> tuple[str, dict | None]:
+async def run_agent(intent: str, query: str, history: list, shopping_memory: dict, last_intent: str = "", status_cb=None, memory=None) -> tuple[str, dict | None]:
     if last_intent and intent != last_intent:
         close_all_browsers()
     if intent == "SHOPPING":
-        result = await run_shopping_agent(query, shopping_memory)
+        result = await run_shopping_agent(query, shopping_memory, memory=memory)
         if isinstance(result, tuple):
             return result
         return result, None
     elif intent == "CALENDAR":
-        return await run_calendar_agent(query), None
+        return await run_calendar_agent(query, memory=memory), None
     elif intent == "RESEARCH":
-        return await run_research_agent(query, history, status_cb=status_cb), None
+        return await run_research_agent(query, history, status_cb=status_cb, memory=memory), None
     else:
-        return await run_general_agent(query, history), None
+        return await run_general_agent(query, history, memory=memory), None
 
 
 @app.websocket("/ws")
@@ -88,6 +89,7 @@ async def websocket_endpoint(ws: WebSocket):
     conversation_history = []
     shopping_memory = {"last_query": "", "last_results": []}
     last_intent = ""
+    session_memory = SessionMemory.load()
 
     try:
         while True:
@@ -103,13 +105,16 @@ async def websocket_endpoint(ws: WebSocket):
             print(f"[opensight] received: {user_text}")
             await send_status(ws, "BRAIN", "thinking", "routing")
 
+            # record user turn in shared memory before any agent runs
+            session_memory.add_turn("user", user_text)
+
             try:
                 # override router for research follow-ups so they never go to GENERAL
                 if _is_research_followup(user_text):
                     print(f"[opensight] research follow-up override")
                     steps = [{"intent": "RESEARCH", "query": user_text}]
                 else:
-                    steps = await plan_intent(user_text, conversation_history)
+                    steps = await plan_intent(user_text, conversation_history, memory=session_memory)
                 print(f"[opensight] plan: {steps}")
 
                 all_responses = []
@@ -135,7 +140,9 @@ async def websocket_endpoint(ws: WebSocket):
 
                     result, memory_update = await run_agent(
                         intent, query, conversation_history, shopping_memory,
-                        last_intent, status_cb=_research_status if intent == "RESEARCH" else None
+                        last_intent,
+                        status_cb=_research_status if intent == "RESEARCH" else None,
+                        memory=session_memory,
                     )
                     last_intent = intent
                     all_responses.append(result)
@@ -162,6 +169,10 @@ Combine these into one 2-sentence spoken response. No filler. No lists.
             conversation_history.append({"user": user_text, "assistant": final_response})
             if len(conversation_history) > 3:
                 conversation_history.pop(0)
+
+            # persist memory after every complete turn
+            session_memory.last_query = user_text
+            session_memory.save()
 
             await ws.send_text(json.dumps({"type": "response", "text": final_response}))
             await send_status(ws, "IDLE", "idle")
