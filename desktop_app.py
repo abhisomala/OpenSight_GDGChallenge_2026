@@ -12,10 +12,10 @@ from app_state import AppState
 from audio_engine import init_microphone, run_deepgram_loop, voice_worker
 from agent import process_recognized_text, set_agent_status, AGENT_ORDER
 
-from ui_theme import ThemeMixin
-from ui_draw import DrawMixin
-from ui_context import ContextMixin
-from ui_animations import AnimationMixin
+from ui.ui_theme import ThemeMixin
+from ui.ui_draw import DrawMixin
+from ui.ui_context import ContextMixin
+from ui.ui_animations import AnimationMixin
 
 load_dotenv()
 
@@ -123,8 +123,8 @@ class LiquidGlassDisplay(ThemeMixin, DrawMixin, ContextMixin, AnimationMixin):
         try:
             from PIL import Image, ImageTk
             base_dir = os.path.dirname(os.path.abspath(__file__))
-            icon_png_path = os.path.join(base_dir, "opensight_icon.png")
-            ico_path = os.path.join(base_dir, "opensight_icon.ico")
+            icon_png_path = os.path.join(base_dir, "assets", "icons", "opensight_icon.png")
+            ico_path = os.path.join(base_dir, "assets", "icons", "opensight_icon.ico")
             img = Image.open(icon_png_path)
             self.window_icon_tk = ImageTk.PhotoImage(img)
             self.root.iconphoto(True, self.window_icon_tk)
