@@ -58,27 +58,35 @@ SHOPPING_FOLLOWUP_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
-# Questions about a product already on screen — route to GENERAL with context
+SHOPPING_INTENT_PATTERN = re.compile(
+    r"\b(find|get|buy|order|search|look for|shop|show me|recommend|suggest|pick)\b.{0,30}\b(on amazon|supplement|product|pill|capsule|tablet|powder|oil|cream|gear|device|gadget|book|item)\b"
+    r"|\b(on amazon|under \$|less than \$|for under|find me|get me|buy me|order me)\b",
+    re.IGNORECASE,
+)
+
 PRODUCT_CONTEXT_PATTERN = re.compile(
     r"\b(ingredient|ingredients|nutrition|calories|allergen|contain|made of|what.s in|what is in|how much|serving|protein|carb|fat|sugar|sodium|fiber|review|rating|how many star)\b",
     re.IGNORECASE,
 )
 
 
-def _has_recent_research_context(history: list | None) -> bool:
+def _has_recent_research_context(history: list | None, memory=None) -> bool:
+    """Check history AND memory for a recent research result."""
+    if memory is not None and memory.entities.get("product_hint"):
+        return True
     if not history:
         return False
     for turn in history[-3:]:
         assistant_text = str(turn.get("assistant", "")).lower()
         if any(phrase in assistant_text for phrase in [
-            "research", "paper", "study", "journal", "published", "authors"
+            "research", "paper", "study", "journal", "published", "authors",
+            "got two papers", "found one paper", "i found",
         ]):
             return True
     return False
 
 
 def _has_recent_shopping_context(history: list | None, shopping_memory: dict | None = None) -> bool:
-    # also check shopping_memory directly — survives server restarts
     if shopping_memory and shopping_memory.get("last_results"):
         return True
     if not history:
@@ -99,10 +107,7 @@ def _has_recent_shopping_context(history: list | None, shopping_memory: dict | N
 async def generate_with_fallback(contents: str) -> str:
     for model in MODELS:
         try:
-            response = client.models.generate_content(
-                model=model,
-                contents=contents
-            )
+            response = client.models.generate_content(model=model, contents=contents)
             return response.text.strip()
         except Exception as e:
             print(f"[gemini] {model} failed: {e}, trying next...")
@@ -110,10 +115,8 @@ async def generate_with_fallback(contents: str) -> str:
 
 
 async def extract_preferences(query: str, memory) -> None:
-    """Extract budget/allergies/diet/topics from query and write into shared memory."""
     if len(query.split()) < 4:
         return
-
     prompt = (
         'Extract any user preferences or constraints from this query.\n'
         'Return JSON only — no explanation, no markdown:\n'
@@ -121,11 +124,9 @@ async def extract_preferences(query: str, memory) -> None:
         'If nothing is found, return all nulls/empty arrays.\n'
         f'Query: {query}'
     )
-
     try:
         raw = re.sub(r"```json|```", "", await generate_with_fallback(prompt)).strip()
         prefs = json.loads(raw)
-
         new_prefs: dict = {}
         if prefs.get("budget") is not None:
             new_prefs["budget"] = prefs["budget"]
@@ -140,14 +141,12 @@ async def extract_preferences(query: str, memory) -> None:
             new_prefs["diet"] = list(set(existing + diet))
         if new_prefs:
             memory.update_preferences(new_prefs)
-
         topics = prefs.get("topics") or []
         existing_topics = set(memory.entities.get("topics", []))
         for t in topics:
             if t and t not in existing_topics:
                 memory.entities["topics"].append(t)
                 existing_topics.add(t)
-
     except Exception as e:
         print(f"[router] preference extraction skipped: {e}")
 
@@ -162,13 +161,10 @@ async def plan_intent(
 ) -> list:
     history = history or []
 
-    # extract preferences on every query
     if memory is not None:
         await extract_preferences(user_text, memory)
 
-    # ── product context question — user is asking about an open product page
-    # route to GENERAL so it answers from memory/knowledge rather than
-    # launching a new Amazon search
+    # ── product context question on an open Amazon page → GENERAL ──
     if PRODUCT_CONTEXT_PATTERN.search(user_text) and _has_recent_shopping_context(history, shopping_memory):
         last_product = ""
         if shopping_memory and shopping_memory.get("last_results"):
@@ -177,13 +173,35 @@ async def plan_intent(
         print(f"[router] product context question detected, routing to GENERAL")
         return [{"intent": "GENERAL", "query": enriched}]
 
-    # ── shopping follow-up: pass original query through UNCHANGED
+    # ── shopping follow-up: pass original query unchanged ──
     if _has_recent_shopping_context(history, shopping_memory) and SHOPPING_FOLLOWUP_PATTERN.search(user_text):
         print(f"[router] shopping follow-up detected, passing original query through")
         return [{"intent": "SHOPPING", "query": user_text}]
 
-    # ── research follow-up: enrich query with last research context
-    if _has_recent_research_context(history) and RESEARCH_FOLLOWUP_PATTERN.search(user_text):
+    # ── cross-agent: research → shopping handoff ──
+    # User says something shopping-intent after a research turn → inject product_hint
+    if _has_recent_research_context(history, memory) and SHOPPING_INTENT_PATTERN.search(user_text):
+        product_hint = ""
+        if memory is not None:
+            product_hint = memory.entities.get("product_hint", "")
+
+        if product_hint:
+            # preserve any price constraint the user stated
+            price_match = re.search(
+                r"(under \$[\d]+|less than \$[\d]+|below \$[\d]+|under [\d]+|for under \$[\d]+)",
+                user_text, re.IGNORECASE
+            )
+            price_clause = f" {price_match.group(0)}" if price_match else ""
+            enriched_query = f"{product_hint}{price_clause}"
+            print(f"[router] research→shopping handoff: '{enriched_query}'")
+            return [{"intent": "SHOPPING", "query": enriched_query}]
+        else:
+            # no hint stored yet — still route to shopping with original query
+            print(f"[router] research→shopping handoff (no hint), passing query through")
+            return [{"intent": "SHOPPING", "query": user_text}]
+
+    # ── research follow-up: enrich with last research context ──
+    if _has_recent_research_context(history, memory) and RESEARCH_FOLLOWUP_PATTERN.search(user_text):
         last_research = ""
         for turn in reversed(history):
             if any(phrase in turn.get("assistant", "").lower() for phrase in

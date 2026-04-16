@@ -5,8 +5,82 @@ import time
 from typing import Optional
 from urllib.parse import quote_plus
 from playwright.sync_api import sync_playwright
+import browser_manager
 
 _active_browser: dict | None = None
+
+# stores scraped product details from the open product page
+_open_product_details: dict = {
+    "title": "",
+    "ingredients": "",
+    "bullets": [],
+    "url": "",
+}
+
+
+def get_open_product_details() -> dict:
+    return _open_product_details
+
+
+def _scrape_product_details(page) -> dict:
+    """
+    Extract ingredients, feature bullets, and title from an open Amazon product page.
+    Tries multiple selectors — Amazon's structure varies by product category.
+    """
+    details = {"title": "", "ingredients": "", "bullets": [], "url": page.url}
+
+    # title
+    try:
+        el = page.query_selector("#productTitle")
+        if el:
+            details["title"] = el.inner_text().strip()
+    except Exception:
+        pass
+
+    # ingredients — several possible locations on Amazon
+    ingredient_selectors = [
+        "#ingredient-statement",
+        "#important-information .a-section p",
+        "[data-feature-name='ingredientStatement'] span",
+        "#ingredients-content",
+        ".ingredient-statement",
+        "#tech-specs-content tr:has-text('Ingredients') td",
+    ]
+    for sel in ingredient_selectors:
+        try:
+            el = page.query_selector(sel)
+            if el:
+                text = el.inner_text().strip()
+                if len(text) > 20:
+                    details["ingredients"] = text
+                    break
+        except Exception:
+            continue
+
+    # if no dedicated ingredient field, look inside Important Information section
+    if not details["ingredients"]:
+        try:
+            important = page.query_selector("#important-information")
+            if important:
+                text = important.inner_text().strip()
+                # find the Ingredients: sub-section
+                match = re.search(r'ingredients[:\s]+(.+?)(\n\n|$)', text, re.IGNORECASE | re.DOTALL)
+                if match:
+                    details["ingredients"] = match.group(1).strip()[:600]
+        except Exception:
+            pass
+
+    # feature bullets — always useful even if no ingredient field
+    try:
+        bullet_els = page.query_selector_all("#feature-bullets li span.a-list-item")
+        details["bullets"] = [
+            el.inner_text().strip() for el in bullet_els
+            if el.inner_text().strip()
+        ][:8]
+    except Exception:
+        pass
+
+    return details
 
 
 def close_active_browser():
@@ -18,6 +92,7 @@ def close_active_browser():
 
 def _clean_query(query: str) -> str:
     cleaned = re.sub(r'\s*(on amazon|from amazon|at amazon|amazon)\s*', ' ', query, flags=re.IGNORECASE)
+    cleaned = re.sub(r'\s*\[context:[^\]]*\]', '', cleaned, flags=re.IGNORECASE)
     return cleaned.strip()
 
 
@@ -67,14 +142,11 @@ def _is_open_intent(query: str) -> bool:
 def _extract_option_index(query: str, max_options: int) -> Optional[int]:
     if max_options <= 0:
         return None
-
     text = (query or "").lower()
-
     number_match = re.search(r'\boption\s*(\d+)\b', text)
     if number_match:
         idx = int(number_match.group(1)) - 1
         return idx if 0 <= idx < max_options else None
-
     ordinal_map = {
         "first": 0, "1st": 0, "one": 0,
         "second": 1, "2nd": 1, "two": 1,
@@ -83,17 +155,14 @@ def _extract_option_index(query: str, max_options: int) -> Optional[int]:
     for word, idx in ordinal_map.items():
         if re.search(rf'\b{re.escape(word)}\b', text):
             return idx if idx < max_options else None
-
     return None
 
 
 def _build_product_url(href: str | None, asin: str | None = None) -> str | None:
-    # prefer ASIN-based URL — always works, never redirects or errors
     if asin:
         return f"https://www.amazon.com/dp/{asin}"
     if not href:
         return None
-    # try extracting ASIN from href as fallback
     asin_match = re.search(r'/dp/([A-Z0-9]{10})', href)
     if asin_match:
         return f"https://www.amazon.com/dp/{asin_match.group(1)}"
@@ -105,6 +174,14 @@ def _build_product_url(href: str | None, asin: str | None = None) -> str | None:
 
 
 def _open_product_page(url: str) -> None:
+    """Open a product page, scrape details, then stay open until closed."""
+    global _open_product_details
+    browser_manager.close_all()
+    holder: dict = {"close": False}
+
+    def _close():
+        holder["close"] = True
+
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=False, args=[
@@ -115,9 +192,25 @@ def _open_product_page(url: str) -> None:
             ])
             context = browser.new_context(viewport={"width": 720, "height": 900})
             page = context.new_page()
+            browser_manager.register(_close)
             page.goto(url)
             page.wait_for_load_state("domcontentloaded")
-            page.wait_for_timeout(15000)
+
+            # scrape product details while page is loaded
+            try:
+                page.wait_for_timeout(2000)  # let dynamic content settle
+                details = _scrape_product_details(page)
+                _open_product_details.update(details)
+                print(f"[shopping] scraped product: {details['title'][:50]}")
+                if details["ingredients"]:
+                    print(f"[shopping] ingredients found: {details['ingredients'][:80]}...")
+                else:
+                    print(f"[shopping] no ingredient field found, got {len(details['bullets'])} bullets")
+            except Exception as e:
+                print(f"[shopping] scrape error: {e}")
+
+            while not holder.get("close"):
+                page.wait_for_timeout(500)
             browser.close()
     except Exception as e:
         print(f"[shopping] open page error: {e}")
@@ -144,8 +237,10 @@ def _handle_followup_query(query: str, shopping_memory: dict) -> str:
         url = selected.get("url")
         title = _shorten_title(selected["title"])
         if not url:
-            # properly encoded search fallback
             url = f"https://www.amazon.com/s?k={quote_plus(selected['title'])}"
+        # clear previous product details before opening new one
+        global _open_product_details
+        _open_product_details = {"title": "", "ingredients": "", "bullets": [], "url": ""}
         threading.Thread(target=_open_product_page, args=(url,), daemon=True).start()
         return f"Opening the {title} now."
 
@@ -153,6 +248,11 @@ def _handle_followup_query(query: str, shopping_memory: dict) -> str:
 
 
 def _open_amazon_browser(query: str, result_holder: dict) -> None:
+    browser_manager.close_all()
+
+    def _close():
+        result_holder["close"] = True
+
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=False, args=[
@@ -163,6 +263,7 @@ def _open_amazon_browser(query: str, result_holder: dict) -> None:
             ])
             context = browser.new_context(viewport={"width": 720, "height": 900})
             page = context.new_page()
+            browser_manager.register(_close)
 
             page.goto("https://www.amazon.com")
             page.wait_for_load_state("domcontentloaded")
@@ -180,7 +281,6 @@ def _open_amazon_browser(query: str, result_holder: dict) -> None:
                 try:
                     title_el = item.query_selector('h2 span')
                     price_el = item.query_selector('.a-price .a-offscreen')
-
                     title = title_el.inner_text() if title_el else "Unknown"
                     price = price_el.inner_text() if price_el else ""
 
@@ -189,11 +289,9 @@ def _open_amazon_browser(query: str, result_holder: dict) -> None:
                         "case", "cover", "screen protector", "keyboard cover", "sleeve", "bag"
                     ]):
                         continue
-
                     if not price:
                         continue
 
-                    # grab ASIN directly from the card attribute — most reliable source
                     asin = item.get_attribute('data-asin')
                     title_link_el = item.query_selector('h2 a')
                     href = title_link_el.get_attribute('href') if title_link_el else None
@@ -257,8 +355,6 @@ async def run_shopping_agent(query: str, shopping_memory: dict | None = None, me
             memory.set_result("shopping", response)
             memory.add_turn("assistant", response, agent="shopping")
         return response, shopping_memory
-
-    close_active_browser()
 
     result_holder = {"done": False, "results": [], "close": False}
     thread = threading.Thread(
