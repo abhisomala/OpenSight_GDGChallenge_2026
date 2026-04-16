@@ -9,13 +9,15 @@ import datetime
 from dotenv import load_dotenv
 
 from app_state import AppState
-from audio_engine import init_microphone, run_deepgram_loop, voice_worker
+from audio_engine import init_microphone, run_deepgram_loop, run_wake_word_loop, voice_worker
 from agent import process_recognized_text, set_agent_status, AGENT_ORDER
 
 from ui.ui_theme import ThemeMixin
 from ui.ui_draw import DrawMixin
 from ui.ui_context import ContextMixin
 from ui.ui_animations import AnimationMixin
+
+import browser_manager
 
 load_dotenv()
 
@@ -33,7 +35,6 @@ class LiquidGlassDisplay(ThemeMixin, DrawMixin, ContextMixin, AnimationMixin):
         self.state.load_ui_preferences()
         self.state.agent_enabled = websockets is not None
 
-        # animation job handles
         self.pulse_job = None
         self.ai_animation_job = None
         self.thinking_job = None
@@ -44,7 +45,6 @@ class LiquidGlassDisplay(ThemeMixin, DrawMixin, ContextMixin, AnimationMixin):
         self.context_anim_job = None
         self._cursor_job = None
 
-        # state
         self.thinking_step = 0
         self.ai_render_text = ""
         self.ai_animation_target = ""
@@ -54,7 +54,6 @@ class LiquidGlassDisplay(ThemeMixin, DrawMixin, ContextMixin, AnimationMixin):
         self._cursor_visible = True
         self.research_status = ""
 
-        # waveform
         self.waveform_bars = [0.28, 0.42, 0.6, 0.42, 0.28]
         self.waveform_phase = 0.0
         self.waveform_mode = "off"
@@ -65,7 +64,6 @@ class LiquidGlassDisplay(ThemeMixin, DrawMixin, ContextMixin, AnimationMixin):
         self.waveform_noise = [random.uniform(-0.03, 0.03) for _ in range(5)]
         self.gradient_phase = 0.0
 
-        # UI state
         self.agent_flash: dict[str, int] = {}
         self.mic_level_smooth = 0.0
         self.user_timestamp = ""
@@ -112,8 +110,9 @@ class LiquidGlassDisplay(ThemeMixin, DrawMixin, ContextMixin, AnimationMixin):
         init_microphone(self.state)
         self.voice_thread = threading.Thread(target=voice_worker, args=(self.state,), daemon=True)
         self.voice_thread.start()
+        run_wake_word_loop(self.state, self._on_wake)
 
-        self.root.title("OpenSight - Technology that Adapts to You.")
+        self.root.title("OpenSight")
         if os.name == "nt":
             try:
                 import ctypes
@@ -169,6 +168,30 @@ class LiquidGlassDisplay(ThemeMixin, DrawMixin, ContextMixin, AnimationMixin):
         self._start_gradient_loop()
         self._start_mic_level_loop()
 
+        # register our HWND with browser_manager after the window is ready
+        self.root.after(500, self._register_hwnd)
+
+    def _register_hwnd(self):
+        """Tell browser_manager our window handle so it can focus us."""
+        if os.name == "nt":
+            try:
+                hwnd = self.root.winfo_id()
+                browser_manager.set_opensight_hwnd(hwnd)
+            except Exception as e:
+                print(f"[focus] could not register HWND: {e}")
+
+    def _focus_self(self):
+        """Bring OpenSight to the foreground."""
+        try:
+            browser_manager.focus_opensight()
+        except Exception:
+            pass
+        try:
+            self.root.lift()
+            self.root.focus_force()
+        except Exception:
+            pass
+
     def _init_typography(self):
         families = set(tkfont.families(self.root))
         self.font_ui = "Inter" if "Inter" in families else "Helvetica"
@@ -203,12 +226,12 @@ class LiquidGlassDisplay(ThemeMixin, DrawMixin, ContextMixin, AnimationMixin):
         self._safe_after(0, self._handle_wake)
 
     def _handle_wake(self):
+        self._focus_self()
         if not self.state.listening:
             self.toggle_listening()
         self.state.voice_queue.put("Yes?")
 
     def on_canvas_motion(self, event):
-        # ── reasoning chain hover (agents tab) ──
         if self.state.active_right_tab == "agents":
             new_hover = -1
             for idx, box in enumerate(self.reasoning_row_hitboxes):
@@ -222,8 +245,7 @@ class LiquidGlassDisplay(ThemeMixin, DrawMixin, ContextMixin, AnimationMixin):
             if self.reasoning_hover_index != -1:
                 self.reasoning_hover_index = -1
                 self.redraw()
- 
-        # ── document card hover (context tab) ──
+
         if self.state.active_right_tab == "context" and self.context_open_section == "documents":
             new_doc_hover = -1
             for doc_idx, box in self.context_doc_card_hitboxes.items():
@@ -267,7 +289,6 @@ class LiquidGlassDisplay(ThemeMixin, DrawMixin, ContextMixin, AnimationMixin):
             return
 
         if self.state.active_right_tab == "context":
-            # pill × remove buttons — must be checked first
             for (kind, value), bbox in list(getattr(self, "pill_remove_hitboxes", {}).items()):
                 if self._point_in_box(event.x, event.y, bbox):
                     self.remove_learned_item(kind, value)
@@ -351,6 +372,7 @@ class LiquidGlassDisplay(ThemeMixin, DrawMixin, ContextMixin, AnimationMixin):
         s.listening = not s.listening
         s.session_token += 1
         if s.listening:
+            self._focus_self()  # bring OpenSight forward when starting to listen
             s.stop_event.clear()
             s.is_speaking = False
             s.suppress_until = 0.0

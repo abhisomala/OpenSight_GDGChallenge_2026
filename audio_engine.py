@@ -6,6 +6,35 @@ import time
 
 import sounddevice as sd
 
+_WAKE_PHRASES = [
+    "opensight",
+    "open sight",
+    "open site",
+    "open sign",
+    "open signs",
+    "opsin",
+    "open size",
+    "open cited",
+    "open sighed",
+]
+
+_WAKE_COOLDOWN = 2.0
+_last_wake_time: float = 0.0
+
+
+def _is_wake_word(transcript: str) -> bool:
+    t = transcript.lower().strip()
+    return any(phrase in t for phrase in _WAKE_PHRASES)
+
+
+def _should_fire_wake(on_wake_cb) -> bool:
+    global _last_wake_time
+    now = time.monotonic()
+    if now - _last_wake_time < _WAKE_COOLDOWN:
+        return False
+    _last_wake_time = now
+    return True
+
 
 def init_microphone(state):
     try:
@@ -17,11 +46,123 @@ def init_microphone(state):
         print(f"[mic] Default input device error: {e}, falling back to library default")
 
 
-def run_deepgram_loop(state, session_token: int, redraw_cb, on_final_cb, on_interim_cb, on_wake_cb=None):
-    asyncio.run(_deepgram_retry(state, session_token, redraw_cb, on_final_cb, on_interim_cb, on_wake_cb))
+def run_wake_word_loop(state, on_wake_cb):
+    t = threading.Thread(
+        target=lambda: asyncio.run(_wake_word_loop(state, on_wake_cb)),
+        daemon=True,
+    )
+    t.start()
 
 
-async def _deepgram_retry(state, session_token, redraw_cb, on_final_cb, on_interim_cb, on_wake_cb=None):
+async def _wake_word_loop(state, on_wake_cb):
+    try:
+        websockets = __import__("websockets")
+    except Exception:
+        print("[wake] websockets not available — wake word disabled")
+        return
+
+    while not state.shutdown_event.is_set():
+        try:
+            await _wake_word_listen(state, on_wake_cb, websockets)
+        except Exception as e:
+            print(f"[wake] error: {e}")
+        if state.shutdown_event.is_set():
+            break
+        await asyncio.sleep(2)
+
+
+async def _wake_word_listen(state, on_wake_cb, websockets):
+    api_key = os.getenv("DEEPGRAM_API_KEY")
+    if not api_key:
+        return
+
+    url = (
+        "wss://api.deepgram.com/v1/listen"
+        "?model=nova-2&language=en-US&smart_format=true"
+        "&interim_results=true&endpointing=300"
+        "&encoding=linear16&channels=1"
+        f"&sample_rate={state.sample_rate}"
+    )
+    headers = {"Authorization": f"Token {api_key}"}
+
+    try:
+        async with websockets.connect(url, additional_headers=headers, ping_interval=None) as ws:
+            ws_alive = True
+            audio_queue: queue.Queue[bytes | None] = queue.Queue(maxsize=50)
+
+            async def send_audio():
+                while ws_alive and not state.shutdown_event.is_set():
+                    frame = await asyncio.to_thread(audio_queue.get)
+                    if frame is None:
+                        return
+                    await ws.send(frame)
+
+            def audio_cb(indata, frames, t, status):
+                if not ws_alive or state.shutdown_event.is_set():
+                    return
+                frame = bytes(indata)
+                try:
+                    audio_queue.put_nowait(frame)
+                except queue.Full:
+                    try:
+                        audio_queue.get_nowait()
+                        audio_queue.put_nowait(frame)
+                    except (queue.Empty, queue.Full):
+                        pass
+
+            stream = sd.InputStream(
+                samplerate=state.sample_rate, blocksize=4800,
+                dtype="int16", channels=1, callback=audio_cb,
+            )
+            stream.start()
+            sender = asyncio.create_task(send_audio())
+
+            try:
+                while not state.shutdown_event.is_set():
+                    try:
+                        msg = await asyncio.wait_for(ws.recv(), timeout=1.0)
+                        import json
+                        data = json.loads(msg)
+                        if data.get("type") == "Results":
+                            transcript = (
+                                data.get("channel", {})
+                                    .get("alternatives", [{}])[0]
+                                    .get("transcript", "")
+                            )
+                            if transcript.strip() and _is_wake_word(transcript):
+                                if _should_fire_wake(on_wake_cb):
+                                    print(f"[wake] triggered by: '{transcript.strip()}'")
+                                    # focus OpenSight before calling the callback
+                                    try:
+                                        import browser_manager
+                                        browser_manager.focus_opensight()
+                                    except Exception:
+                                        pass
+                                    on_wake_cb()
+                    except asyncio.TimeoutError:
+                        continue
+                    except Exception as e:
+                        print(f"[wake] recv error: {e}")
+                        break
+            finally:
+                ws_alive = False
+                try:
+                    audio_queue.put_nowait(None)
+                except queue.Full:
+                    pass
+                sender.cancel()
+                stream.stop()
+                stream.close()
+
+    except Exception as e:
+        print(f"[wake] connection error: {e}")
+
+
+def run_deepgram_loop(state, session_token: int, redraw_cb, on_final_cb, on_interim_cb):
+    asyncio.run(_deepgram_retry(state, session_token, redraw_cb, on_final_cb, on_interim_cb))
+
+
+async def _deepgram_retry(state, session_token, redraw_cb, on_final_cb, on_interim_cb):
     try:
         websockets = __import__("websockets")
     except Exception:
@@ -31,7 +172,7 @@ async def _deepgram_retry(state, session_token, redraw_cb, on_final_cb, on_inter
     max_retries = 5
     while not state.stop_event.is_set() and session_token == state.session_token:
         try:
-            await _deepgram_listen(state, session_token, on_final_cb, on_interim_cb, websockets, on_wake_cb)
+            await _deepgram_listen(state, session_token, on_final_cb, on_interim_cb, websockets)
         except Exception as e:
             print(f"[deepgram] error: {e}")
         if state.stop_event.is_set() or session_token != state.session_token:
@@ -44,7 +185,7 @@ async def _deepgram_retry(state, session_token, redraw_cb, on_final_cb, on_inter
         await asyncio.sleep(wait)
 
 
-async def _deepgram_listen(state, session_token, on_final_cb, on_interim_cb, websockets, on_wake_cb=None):
+async def _deepgram_listen(state, session_token, on_final_cb, on_interim_cb, websockets):
     api_key = os.getenv("DEEPGRAM_API_KEY")
     if not api_key:
         return
@@ -113,13 +254,7 @@ async def _deepgram_listen(state, session_token, on_final_cb, on_interim_cb, web
                             is_final = bool(data.get("is_final") or data.get("speech_final"))
                             if transcript and transcript.strip():
                                 if is_final:
-                                    transcript_lower = transcript.lower().strip()
-                                    if on_wake_cb and any(phrase in transcript_lower for phrase in [
-                                        "hey opensight", "opensight", "hey open sight",
-                                        "open site", "hey open site",
-                                    ]):
-                                        on_wake_cb()
-                                    else:
+                                    if not _is_wake_word(transcript):
                                         on_final_cb(transcript)
                                 else:
                                     on_interim_cb(f"... {transcript}")
@@ -158,7 +293,6 @@ def voice_worker(state):
 
 
 def speak_text(state, text: str):
-    return # disable TTS for now
     import platform
     import subprocess
 
@@ -174,7 +308,6 @@ def speak_text(state, text: str):
                 voice_id="onwK4e9ZLuTAKqWW03F9",
                 text=text,
                 model_id="eleven_turbo_v2",
-                
             )
             el_stream(audio)
             return

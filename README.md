@@ -2,31 +2,31 @@
 
 **Technology that Adapts to You.**
 
-> An AI-powered voice assistant that replaces screen readers with active task execution — navigating, searching, and acting on behalf of visually impaired users.
+> An AI-powered voice assistant that replaces screen readers with active, intent-driven task execution — navigating, searching, and acting on behalf of visually impaired users.
 
-*GDG on Campus Solution Challenge 2026 · SDG 10 · SDG 3*
+*Google Developer Groups on Campus Solution Challenge 2026 · Sustainable Development Goal 10 · Sustainable Development Goal 3*
 
 ---
 
 ## Demo
 
-<!-- Replace with your actual demo GIF after recording -->
 > **[▶ Watch the 2-minute demo](https://youtube.com/your-link-here)**
 
-Demo flow: *"Find me research on omega-3 and brain health"* → Scholar tab opens → *"Find me a supplement for that under $30"* → Amazon opens automatically → *"Open the first one"* → Product page opens. No repetition. No manual navigation.
+Demo flow: *"Find me research on omega-3 and brain health"* → Google Scholar tab opens → *"Find me a supplement for that under $30"* → Amazon opens automatically, cross-agent memory carries the research context forward → *"Open the first one"* → Product page opens and ingredients are scraped live. Three utterances. No repetition. No manual navigation.
 
 ---
 
 ## The Problem
 
-Screen readers process interfaces **linearly** — reading every element on screen from top to bottom. For a visually impaired user trying to find a product on Amazon:
+**2.2 billion people** worldwide have a vision impairment (WHO, 2023), of whom 39 million are blind. The tools built to help them haven't fundamentally changed in decades.
 
-- They must listen to every navigation element before reaching results
-- Complex keyboard shortcuts must be memorized per application
-- Poorly structured websites break screen readers entirely
-- A task that takes a sighted user **45 seconds** takes a screen reader user **8+ minutes**
+Screen readers process interfaces **linearly** — reading every element from top to bottom. The result:
 
-This contributes to a measurable productivity and independence gap for the **285 million people** worldwide living with visual impairment.
+- Blind web users lose an average of **30.4% of their time** to frustrating screen reader situations — confusing layout feedback, conflicts with applications, missing alt text *(Lazar et al., International Journal of Human-Computer Interaction)*
+- **97% of the web remains inaccessible** to the disabled community *(AudioEye, 2024 — scan of ~40,000 enterprise websites)*
+- Blind users attempting Fortune 500 job applications succeeded only **55.6% of the time** — the shortest application took 20 minutes, the longest took **135 minutes** *(Journal of Visual Impairment & Blindness, 2023)*
+
+This is not a niche problem. It is a systemic exclusion from the modern web.
 
 ---
 
@@ -34,77 +34,102 @@ This contributes to a measurable productivity and independence gap for the **285
 
 OpenSight replaces passive reading with **active task execution**.
 
-Users speak naturally. OpenSight:
-1. Understands intent across a multi-agent system
-2. Navigates browsers, searches APIs, and queries databases autonomously
-3. Maintains session memory across turns — no repeating yourself
-4. Speaks results back conversationally in real time
+Users speak naturally. OpenSight understands intent, navigates autonomously, and speaks results back — without the user ever touching a keyboard or memorizing a shortcut.
 
-The key differentiator: **cross-agent memory**. After researching a topic, OpenSight automatically carries that context into a product search — without being told to.
+**Stanford University** found speech input is **3× faster than keyboard** (161 vs 53 WPM) with a 20.4% lower error rate. OpenSight is built on that insight end-to-end.
+
+### What makes it different
+
+**Cross-agent memory** — After a research query, OpenSight automatically carries that context into a follow-up shopping search. The user says *"find me a supplement for that"* — OpenSight already knows what "that" is.
+
+**Live page awareness** — When a product page opens, OpenSight scrapes it in real time. Asking *"what are the ingredients"* returns the actual ingredient list from the open page, not a generic web search.
+
+**Wake word activation** — Say *"OpenSight"* from anywhere and the app comes to the foreground, ready to listen. Browser windows step aside automatically; OpenSight reclaims focus when you speak to it.
 
 ---
 
 ## Architecture
 
-```mermaid
-flowchart TD
-    A[User speaks] --> B[Deepgram STT\nreal-time speech to text]
-    B --> C[OpenSight server\nWebSocket · session memory]
-    C --> D[Gemini · router\nintent classification]
-    D --> E[Shopping\n→ Amazon]
-    D --> F[Research\n→ Google Scholar]
-    D --> G[Calendar\n→ Google Calendar]
-    D --> H[General\n→ Web search]
-    E --> I[ElevenLabs TTS\ntext to speech]
-    F --> I
-    G --> I
-    H --> I
-    I --> J[User hears response]
-
-    style A fill:#f0f0f4,stroke:#aaa,color:#333
-    style J fill:#f0f0f4,stroke:#aaa,color:#333
-    style B fill:#e1f5ee,stroke:#0f6e56,color:#085041
-    style I fill:#e1f5ee,stroke:#0f6e56,color:#085041
-    style C fill:#eeedfe,stroke:#534ab7,color:#26215c
-    style D fill:#faeeda,stroke:#ba7517,color:#412402
-    style E fill:#e1f5ee,stroke:#0f6e56,color:#085041
-    style F fill:#eeedfe,stroke:#534ab7,color:#26215c
-    style G fill:#faeeda,stroke:#ba7517,color:#412402
-    style H fill:#e6f1fb,stroke:#185fa5,color:#042c53
+```
+User speaks
+    │
+    ▼
+Deepgram Nova-2 STT ── real-time streaming speech to text
+    │
+    ▼
+OpenSight server ── FastAPI WebSocket · SessionMemory · browser_manager
+    │
+    ▼
+Gemini 2.5 Flash router ── intent classification · preference extraction
+    │
+    ├──► Shopping agent ──► Playwright → Amazon (scrapes results + product pages)
+    │
+    ├──► Research agent ──► SerpAPI → Google Scholar (extracts product_hint for handoff)
+    │
+    ├──► Calendar agent ──► Google Calendar API (read + create events)
+    │
+    └──► General agent ──► Google Custom Search API + Gemini synthesis
+    │
+    ▼
+ElevenLabs TTS ── spoken response streamed back to user
 ```
 
 ### How it works
 
-**Routing** — Every utterance passes through Gemini 2.5 Flash which classifies intent and decides which agent handles it. Follow-up queries are detected and short-circuited before Gemini — preserving context without extra API calls.
+**Routing** — Every utterance passes through Gemini 2.5 Flash which classifies intent and decides which agent handles it. Shopping and research follow-ups are detected and short-circuited before Gemini, preserving context without extra API calls.
 
-**Cross-agent memory** — A shared `SessionMemory` object persists across all agents and WebSocket reconnects. When Research finds papers on omega-3, it extracts a `product_hint` and stores it. When the user then says *"find me a supplement for that"*, the router detects the research context and builds the Amazon query automatically.
+**Cross-agent handoff** — `SessionMemory` persists across all agents and WebSocket reconnects. When the Research agent finds papers on omega-3, it extracts a clean `product_hint` and stores it. When the user says *"find me a supplement for that under $30"*, the router detects the research context and builds the Amazon query automatically.
 
-**Browser control** — Shopping and Research agents use Playwright to control real Chromium windows. When a product page opens, it is scraped for ingredients and feature bullets — so follow-up questions like *"what are the ingredients"* are answered from the live page, not a web search.
+**Browser lifecycle** — All browser windows are managed through a central `browser_manager` registry. Opening Amazon closes Scholar. Opening a product page closes Amazon. When the user says the wake word, `browser_manager.focus_opensight()` snaps the desktop app back to the foreground via Win32 `SetForegroundWindow`.
+
+**Live scraping** — When a product page opens, Playwright scrapes ingredient fields and feature bullets before handing control to the user. Follow-up questions about the open product are answered from scraped data, not a web search.
 
 ---
 
-## Google Technologies
+## Scalability & Future Vision
 
-| Technology | Usage |
+### Designed to scale
+
+OpenSight is built around two decisions that make it inherently extensible.
+
+The **multi-agent architecture** means adding a new capability — email, file management, IDE control, music — is just adding a new agent file and a routing rule in `router.py`. The voice pipeline, memory system, and WebSocket server are fully decoupled from what agents do. The system currently has five agents; it could have fifty without touching the core.
+
+It ships today as a **standalone desktop application** — zero install friction beyond one Python file. The FastAPI backend and WebSocket transport are already decoupled from the client, meaning the server could be hosted remotely with no client-side changes. A cloud-hosted version, a mobile client, or a browser extension are all direct extensions of the existing architecture. The always-on wake word loop means OpenSight already functions as a background accessibility layer — the foundation for full OS-level control across any application.
+
+### Near-term roadmap
+
+- Full OS-level control — IDE navigation, file management, email
+- Cross-application memory — preferences and context that survive across sessions and apps
+- Mobile client — same agent backend, voice interface on iOS/Android
+- Braille display output — parallel text channel alongside voice
+- Real user testing — structured evaluation with visually impaired participants
+
+---
+
+## Google Developer Groups on Campus — Google Technologies Used
+
+| Technology | How OpenSight uses it |
 |---|---|
-| **Gemini 2.5 Flash** | Intent routing, response synthesis, preference extraction, cross-agent reasoning |
-| **Google Custom Search API** | Web search for the General agent |
-| **Google Calendar API** | Read and create calendar events via the Calendar agent |
-| **Google Scholar** (via SerpAPI) | Academic paper search for the Research agent |
-| **AntiGravity** | Frontned development for UI |
+| **Gemini 2.5 Flash** | Intent routing on every utterance, response synthesis, preference extraction, cross-agent reasoning, follow-up detection |
+| **Google Custom Search API** | Powers the General agent — web search for any query that doesn't require Amazon, Scholar, or Calendar |
+| **Google Calendar API** | The Calendar agent reads and creates events via OAuth |
+| **Google Scholar** (via SerpAPI) | Academic paper search for the Research agent, with automatic product keyword extraction for cross-agent handoff |
+
 ---
 
-## SDGs Addressed
+## Sustainable Development Goals Addressed
 
 ### SDG 10 — Reduced Inequalities *(primary)*
 
-OpenSight directly targets the **digital accessibility gap**. Visually impaired users are systematically excluded from the efficiency gains of modern web interfaces — e-commerce, research tools, scheduling apps. By replacing linear screen reading with intent-driven navigation, OpenSight reduces the time and cognitive load gap between sighted and visually impaired users.
+OpenSight directly targets the digital accessibility gap. Visually impaired users are systematically excluded from the efficiency gains of modern web interfaces — e-commerce, research tools, scheduling platforms. By replacing linear screen reading with intent-driven navigation, OpenSight reduces the time and cognitive load gap between sighted and visually impaired users.
 
-**Measurable target:** Reduce task completion time for visually impaired users on Amazon from 8+ minutes to under 60 seconds for common shopping flows.
+97% of the web is inaccessible. OpenSight doesn't wait for the web to fix itself — it navigates it as-is, on behalf of the user.
+
+**Measurable target:** Reduce task completion time for common shopping and research flows from 8+ minutes (NVDA screen reader baseline) to under 60 seconds.
 
 ### SDG 3 — Good Health and Well-Being *(secondary)*
 
-Independence is directly linked to mental health outcomes for people with disabilities. Systems that reduce reliance on sighted assistance — and eliminate the frustration of inaccessible interfaces — contribute to autonomy and well-being. OpenSight is designed to be usable without any prior technical training or memorized keyboard shortcuts.
+Independence is directly correlated with mental health outcomes for people with disabilities. Tools that reduce reliance on sighted assistance — and eliminate the documented frustration of inaccessible interfaces — contribute to autonomy, confidence, and well-being. OpenSight requires zero prior technical training and zero memorized keyboard shortcuts.
 
 ---
 
@@ -112,7 +137,7 @@ Independence is directly linked to mental health outcomes for people with disabi
 
 | Layer | Technology |
 |---|---|
-| Voice input | Deepgram real-time STT |
+| Voice input | Deepgram Nova-2 real-time STT |
 | LLM | Gemini 2.5 Flash |
 | Agent orchestration | Python (custom multi-agent loop) |
 | Browser automation | Playwright (Chromium) |
@@ -120,6 +145,7 @@ Independence is directly linked to mental health outcomes for people with disabi
 | Backend | FastAPI + WebSockets |
 | Desktop UI | Tkinter (custom LiquidGlass renderer) |
 | Memory | JSON persistence + in-memory `SessionMemory` |
+| Window management | Win32 ctypes (`SetForegroundWindow`) |
 
 ---
 
@@ -128,6 +154,7 @@ Independence is directly linked to mental health outcomes for people with disabi
 ### Prerequisites
 
 - Python 3.11+
+- Windows (Win32 focus management) or macOS (partial support)
 - A microphone
 
 ### Installation
@@ -135,6 +162,8 @@ Independence is directly linked to mental health outcomes for people with disabi
 ```bash
 git clone https://github.com/YOUR_USERNAME/opensight
 cd opensight
+python -m venv .venv
+.venv\Scripts\activate        # Windows
 pip install -r requirements.txt
 playwright install chromium
 ```
@@ -160,13 +189,13 @@ GOOGLE_SEARCH_CX=your_cx_here
 SERPAPI_KEY=your_key_here
 ```
 
-For Google Calendar OAuth, download `credentials.json` from Google Cloud Console and place it in the project root. The `token.json` will be generated on first run.
+For Google Calendar OAuth, download `credentials.json` from Google Cloud Console and place it in the project root. `token.json` is generated on first run.
 
 ---
 
 ## Running
 
-Open two terminals:
+Open two terminals with the virtual environment active:
 
 **Terminal 1 — Backend server**
 ```bash
@@ -178,20 +207,20 @@ uvicorn server:app --host 127.0.0.1 --port 8080
 python desktop_app.py
 ```
 
-Click the orb or press **Space** to start listening.
+Say **"OpenSight"** to activate, or click the orb, or press **Space**.
 
 ---
 
-## Try It
+## Full Demo Script
 
-Speak these in sequence to see the full cross-agent demo:
+Speak these in sequence to see every system working together:
 
-1. *"Find me research on omega-3 and brain health"*
-2. *"Can you find me a supplement for that under $30"*
-3. *"Open the first one"*
-4. *"What are the ingredients"*
+1. *"Find me research on omega-3 and brain health"* — Research agent, Scholar tab opens
+2. *"Can you find me a supplement for that under $30"* — cross-agent handoff, Amazon opens
+3. *"Open the first one"* — product page opens, ingredients scraped in background
+4. *"What are the ingredients"* — answered from the live page, not a web search
 
-Each turn is handled by a different agent. Memory carries forward automatically.
+Each turn is handled by a different agent. Memory carries forward automatically across all four.
 
 ---
 
@@ -200,37 +229,34 @@ Each turn is handled by a different agent. Memory carries forward automatically.
 ```
 opensight/
 ├── agents/
-│   ├── router.py          # Gemini intent classifier
-│   ├── shopping.py        # Amazon browser agent
-│   ├── research.py        # Google Scholar agent
-│   ├── calendar.py        # Google Calendar agent
-│   └── general.py         # Web search + Gemini agent
+│   ├── router.py          # Gemini intent classifier + cross-agent detection
+│   ├── shopping.py        # Amazon browser agent + live page scraping
+│   ├── research.py        # Google Scholar agent + product_hint extraction
+│   ├── calendar.py        # Google Calendar API agent
+│   └── general.py         # Google Custom Search + Gemini synthesis
 ├── ui/
-│   ├── ui_draw.py         # Canvas rendering
-│   ├── ui_context.py      # Context panel
-│   ├── ui_animations.py   # Animation loops
-│   └── ui_theme.py        # Color themes
+│   ├── ui_draw.py         # Canvas rendering + agent rail
+│   ├── ui_context.py      # Context panel + About You pills + Documents
+│   ├── ui_animations.py   # Waveform, typing cursor, gradient loops
+│   └── ui_theme.py        # Dark/light color system
 ├── assets/
 │   └── icons/
-│       ├── opensight_icon.png
-│       ├── opensight_icon.ico
-│       └── opensight_icon_final.svg
 ├── docs/
 │   ├── memory.md
 │   └── roadmap.md
-├── server.py              # FastAPI WebSocket server
-├── desktop_app.py         # Tkinter UI entry point
-├── memory.py              # SessionMemory + persistence
-├── audio_engine.py        # Deepgram + ElevenLabs
-├── browser_manager.py     # Cross-agent browser lifecycle
-└── app_state.py           # Shared UI state
+├── server.py              # FastAPI WebSocket server + session persistence
+├── desktop_app.py         # Main app entry point + wake word integration
+├── memory.py              # SessionMemory + cross-session JSON persistence
+├── audio_engine.py        # Deepgram STT + ElevenLabs TTS + wake word loop
+├── browser_manager.py     # Cross-agent browser lifecycle + Win32 focus control
+└── app_state.py           # Shared UI + agent state
 ```
 
 ---
 
 ## Team
 
-Built for **GDG on Campus Solution Challenge 2026**
+Built for the **Google Developer Groups on Campus Solution Challenge 2026**
 
 *Virginia Tech*
 
