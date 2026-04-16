@@ -91,7 +91,7 @@ flowchart TD
 | **Google Custom Search API** | Web search for the General agent |
 | **Google Calendar API** | Read and create calendar events via the Calendar agent |
 | **Google Scholar** (via SerpAPI) | Academic paper search for the Research agent |
-
+| **AntiGravity** | Frontned development for UI |
 ---
 
 ## SDGs Addressed
@@ -205,12 +205,21 @@ opensight/
 │   ├── research.py        # Google Scholar agent
 │   ├── calendar.py        # Google Calendar agent
 │   └── general.py         # Web search + Gemini agent
+├── ui/
+│   ├── ui_draw.py         # Canvas rendering
+│   ├── ui_context.py      # Context panel
+│   ├── ui_animations.py   # Animation loops
+│   └── ui_theme.py        # Color themes
+├── assets/
+│   └── icons/
+│       ├── opensight_icon.png
+│       ├── opensight_icon.ico
+│       └── opensight_icon_final.svg
+├── docs/
+│   ├── memory.md
+│   └── roadmap.md
 ├── server.py              # FastAPI WebSocket server
 ├── desktop_app.py         # Tkinter UI entry point
-├── ui_draw.py             # Canvas rendering
-├── ui_context.py          # Context panel
-├── ui_animations.py       # Animation loops
-├── ui_theme.py            # Color themes
 ├── memory.py              # SessionMemory + persistence
 ├── audio_engine.py        # Deepgram + ElevenLabs
 ├── browser_manager.py     # Cross-agent browser lifecycle
