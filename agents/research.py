@@ -15,7 +15,6 @@ research_memory = {
     "scholar_browser_close": None,
 }
 
-# Phrases that always mean a NEW search regardless of word count or cached papers
 _NEW_SEARCH_TRIGGERS = re.compile(
     r"^(research|find research|search for|look up|find papers|find studies|find me research|"
     r"find me papers|show me research|show me papers|get me research|"
@@ -84,14 +83,12 @@ def _build_response(papers: list) -> str:
 
 
 def _is_new_search(query: str) -> bool:
-    """True when the user is clearly requesting a fresh search, not a follow-up."""
     return bool(_NEW_SEARCH_TRIGGERS.search(query.strip()))
 
 
 def _is_followup(query: str) -> bool:
     if not research_memory["last_papers"] or not research_memory["last_query"]:
         return False
-    # explicit new search always wins
     if _is_new_search(query):
         return False
     if len(query.split()) < 6:
@@ -123,6 +120,13 @@ def _launch_scholar_browser(url: str, holder: dict) -> None:
                 page.goto(url, wait_until="domcontentloaded", timeout=15000)
             except Exception as nav_err:
                 print(f"[research] scholar nav note: {nav_err}")
+
+            # grab HWND and bring browser to front
+            hwnd = browser_manager._find_chromium_hwnd(timeout=6.0)
+            if hwnd:
+                browser_manager.set_browser_hwnd(hwnd)
+                browser_manager.focus_browser()
+
             while not holder.get("close"):
                 page.wait_for_timeout(500)
             browser.close()
@@ -158,6 +162,13 @@ def _launch_paper_window(link: str) -> None:
                 page.goto(link, wait_until="domcontentloaded", timeout=15000)
             except Exception as nav_err:
                 print(f"[research] paper nav note: {nav_err}")
+
+            # grab HWND and bring browser to front
+            hwnd = browser_manager._find_chromium_hwnd(timeout=6.0)
+            if hwnd:
+                browser_manager.set_browser_hwnd(hwnd)
+                browser_manager.focus_browser()
+
             while not holder.get("close"):
                 page.wait_for_timeout(500)
             browser.close()
@@ -201,7 +212,6 @@ async def run_research_agent(query: str, history: list = [], status_cb=None, mem
             except Exception as e:
                 print(f"[research] status error: {e}")
 
-    # ── follow-up / open paper path ──
     if _is_followup(query) and research_memory["last_papers"]:
         q = query.lower()
         wants_open = any(w in q for w in ["open", "pull up", "launch", "show me"])
@@ -258,11 +268,9 @@ User: "{query}"
             memory.add_turn("assistant", result, agent="research")
         return result
 
-    # ── new search path ──
     print(f"[research] new search: {query}")
     await _status("Building search query...")
 
-    # strip trigger words before hitting SerpAPI ("research on X" → "X")
     clean_query = re.sub(
         r"^(research on|find research on|find papers on|find studies on|search for|look up)\s+",
         "", query.strip(), flags=re.IGNORECASE
@@ -292,7 +300,6 @@ User: "{query}"
     resp = _build_response(papers)
     print(f"[research] done: {resp[:60]}")
 
-    # open Scholar results tab
     _open_scholar_results(clean_query)
 
     if memory is not None:

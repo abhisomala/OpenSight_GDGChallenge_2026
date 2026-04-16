@@ -9,7 +9,6 @@ import browser_manager
 
 _active_browser: dict | None = None
 
-# stores scraped product details from the open product page
 _open_product_details: dict = {
     "title": "",
     "ingredients": "",
@@ -23,13 +22,7 @@ def get_open_product_details() -> dict:
 
 
 def _scrape_product_details(page) -> dict:
-    """
-    Extract ingredients, feature bullets, and title from an open Amazon product page.
-    Tries multiple selectors — Amazon's structure varies by product category.
-    """
     details = {"title": "", "ingredients": "", "bullets": [], "url": page.url}
-
-    # title
     try:
         el = page.query_selector("#productTitle")
         if el:
@@ -37,7 +30,6 @@ def _scrape_product_details(page) -> dict:
     except Exception:
         pass
 
-    # ingredients — several possible locations on Amazon
     ingredient_selectors = [
         "#ingredient-statement",
         "#important-information .a-section p",
@@ -57,20 +49,17 @@ def _scrape_product_details(page) -> dict:
         except Exception:
             continue
 
-    # if no dedicated ingredient field, look inside Important Information section
     if not details["ingredients"]:
         try:
             important = page.query_selector("#important-information")
             if important:
                 text = important.inner_text().strip()
-                # find the Ingredients: sub-section
                 match = re.search(r'ingredients[:\s]+(.+?)(\n\n|$)', text, re.IGNORECASE | re.DOTALL)
                 if match:
                     details["ingredients"] = match.group(1).strip()[:600]
         except Exception:
             pass
 
-    # feature bullets — always useful even if no ingredient field
     try:
         bullet_els = page.query_selector_all("#feature-bullets li span.a-list-item")
         details["bullets"] = [
@@ -174,7 +163,6 @@ def _build_product_url(href: str | None, asin: str | None = None) -> str | None:
 
 
 def _open_product_page(url: str) -> None:
-    """Open a product page, scrape details, then stay open until closed."""
     global _open_product_details
     browser_manager.close_all()
     holder: dict = {"close": False}
@@ -196,9 +184,14 @@ def _open_product_page(url: str) -> None:
             page.goto(url)
             page.wait_for_load_state("domcontentloaded")
 
-            # scrape product details while page is loaded
+            # grab HWND and register with browser_manager for focus control
+            hwnd = browser_manager._find_chromium_hwnd(timeout=6.0)
+            if hwnd:
+                browser_manager.set_browser_hwnd(hwnd)
+                browser_manager.focus_browser()
+
             try:
-                page.wait_for_timeout(2000)  # let dynamic content settle
+                page.wait_for_timeout(2000)
                 details = _scrape_product_details(page)
                 _open_product_details.update(details)
                 print(f"[shopping] scraped product: {details['title'][:50]}")
@@ -238,7 +231,6 @@ def _handle_followup_query(query: str, shopping_memory: dict) -> str:
         title = _shorten_title(selected["title"])
         if not url:
             url = f"https://www.amazon.com/s?k={quote_plus(selected['title'])}"
-        # clear previous product details before opening new one
         global _open_product_details
         _open_product_details = {"title": "", "ingredients": "", "bullets": [], "url": ""}
         threading.Thread(target=_open_product_page, args=(url,), daemon=True).start()
@@ -273,6 +265,12 @@ def _open_amazon_browser(query: str, result_holder: dict) -> None:
             page.fill('#twotabsearchtextbox', clean)
             page.press('#twotabsearchtextbox', 'Enter')
             page.wait_for_load_state("domcontentloaded")
+
+            # grab HWND once page has settled
+            hwnd = browser_manager._find_chromium_hwnd(timeout=6.0)
+            if hwnd:
+                browser_manager.set_browser_hwnd(hwnd)
+                browser_manager.focus_browser()
 
             results = []
             items = page.query_selector_all('[data-component-type="s-search-result"]')
