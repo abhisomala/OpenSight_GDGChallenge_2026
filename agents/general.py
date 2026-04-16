@@ -1,13 +1,98 @@
 import os
+import re
 import httpx
 from agents.router import generate_with_fallback
 
 SYSTEM_PROMPT = """
-You are OpenSight, a helpful voice assistant. You have been given web search results to answer the user's question accurately.
+You are OpenSight, a helpful voice assistant. You have been given information to answer the user's question accurately.
 Keep responses to 2-3 sentences max — they will be read aloud.
 Do not use bullet points, lists, or markdown. Speak naturally.
-Base your answer on the search results provided. If the results don't help, say so honestly.
+Base your answer on the information provided. If it doesn't help, say so honestly.
 """
+
+_CONTEXT_RE = re.compile(r'\[context:\s*([^\]]+)\]', re.IGNORECASE)
+
+
+def _parse_query(raw_query: str) -> tuple[str, str]:
+    match = _CONTEXT_RE.search(raw_query)
+    if not match:
+        return raw_query.strip(), ""
+    product_raw = match.group(1).strip()
+    product_name = re.sub(r'^user is looking at\s*', '', product_raw, flags=re.IGNORECASE).strip()
+    clean_question = _CONTEXT_RE.sub('', raw_query).strip()
+    return clean_question, product_name
+
+
+def _clean_product_name(name: str) -> str:
+    name = re.sub(r'[®™©]', '', name)
+    name = re.split(r'\s[-|]\s', name)[0]
+    words = name.strip().split()
+    if words:
+        last = words[-1].rstrip('.,')
+        if len(last) < 4 or not re.search(r'[aeiouAEIOU]', last):
+            words = words[:-1]
+    return " ".join(words).strip()
+
+
+def _build_search_query(clean_question: str, product_name: str) -> str:
+    if not product_name:
+        return clean_question
+    product = _clean_product_name(product_name)
+    keywords = re.findall(
+        r'\b(ingredient|ingredients|nutrition|calories|calorie|allergen|allergens|'
+        r'contain|contains|made of|what.s in|protein|carbs|fat|sugar|sodium|fiber|'
+        r'review|reviews|rating|ratings|side effect|dosage|dose)\b',
+        clean_question, re.IGNORECASE
+    )
+    key = keywords[0].lower() if keywords else "ingredients"
+    return f"{product} {key}"
+
+
+def _get_scraped_product_info() -> dict:
+    """Pull whatever was scraped from the currently open product page."""
+    try:
+        from agents.shopping import get_open_product_details
+        return get_open_product_details()
+    except Exception:
+        return {}
+
+
+def _build_scraped_context(details: dict, question: str) -> str:
+    """
+    Turn scraped product details into a concise context block for the prompt.
+    Picks the most relevant fields based on the question.
+    """
+    parts = []
+    if details.get("title"):
+        parts.append(f"Product: {details['title']}")
+
+    q_lower = question.lower()
+    wants_ingredients = any(w in q_lower for w in [
+        "ingredient", "ingredients", "contain", "made of", "what's in", "what is in"
+    ])
+    wants_nutrition = any(w in q_lower for w in [
+        "calorie", "calories", "protein", "carbs", "fat", "sugar", "sodium", "fiber", "nutrition"
+    ])
+
+    if wants_ingredients or wants_nutrition:
+        if details.get("ingredients"):
+            parts.append(f"Ingredients: {details['ingredients']}")
+        elif details.get("bullets"):
+            # bullets often contain ingredient/nutrition info
+            relevant = [b for b in details["bullets"] if any(
+                w in b.lower() for w in ["ingredient", "contain", "made", "natural", "fish", "oil",
+                                          "calorie", "protein", "carb", "fat", "sugar", "sodium"]
+            )]
+            if relevant:
+                parts.append("Product details: " + " | ".join(relevant[:4]))
+            else:
+                parts.append("Product features: " + " | ".join(details["bullets"][:4]))
+    else:
+        # for other questions just give bullets
+        if details.get("bullets"):
+            parts.append("Product features: " + " | ".join(details["bullets"][:5]))
+
+    return "\n".join(parts)
 
 
 async def _search_web(query: str) -> str:
@@ -36,7 +121,16 @@ async def _search_web(query: str) -> str:
 
 
 async def run_general_agent(query: str, history: list = [], memory=None) -> str:
-    search_results = await _search_web(query)
+    clean_question, product_name = _parse_query(query)
+
+    # ── check scraped product page first ──────────────────────────────────────
+    scraped = _get_scraped_product_info()
+    scraped_context = ""
+
+    if scraped and (scraped.get("ingredients") or scraped.get("bullets")):
+        scraped_context = _build_scraped_context(scraped, clean_question)
+        print(f"[general] using scraped product data ({len(scraped.get('ingredients',''))} chars ingredients, "
+              f"{len(scraped.get('bullets',[]))} bullets)")
 
     history_text = ""
     if history:
@@ -50,10 +144,37 @@ async def run_general_agent(query: str, history: list = [], memory=None) -> str:
         if ctx and ctx != "No prior context.":
             mem_context_block = f"\n\nSESSION CONTEXT:\n{ctx}\n"
 
-    if search_results:
-        prompt = f"{SYSTEM_PROMPT}{mem_context_block}{history_text}\n\nSearch results for '{query}':\n{search_results}\n\nUser: {query}"
+    product_context_block = ""
+    if product_name:
+        product_context_block = f"\n\nPRODUCT IN FOCUS: {_clean_product_name(product_name)}\n"
+
+    # if we have scraped data, use it directly — skip web search
+    if scraped_context:
+        prompt = (
+            f"{SYSTEM_PROMPT}{mem_context_block}{product_context_block}{history_text}"
+            f"\n\nINFORMATION FROM THE OPEN PRODUCT PAGE:\n{scraped_context}"
+            f"\n\nAnswer this based on the product page information above: {clean_question}"
+        )
+        print(f"[general] answering from scraped page data")
     else:
-        prompt = f"{SYSTEM_PROMPT}{mem_context_block}{history_text}\n\nUser: {query}\n\n(No web results available, use your training knowledge.)"
+        # fall back to web search
+        search_query = _build_search_query(clean_question, product_name)
+        print(f"[general] search query: {search_query}")
+        search_results = await _search_web(search_query)
+
+        if search_results:
+            prompt = (
+                f"{SYSTEM_PROMPT}{mem_context_block}{product_context_block}{history_text}"
+                f"\n\nSearch results for '{search_query}':\n{search_results}"
+                f"\n\nUser: {clean_question}"
+            )
+        else:
+            prompt = (
+                f"{SYSTEM_PROMPT}{mem_context_block}{product_context_block}{history_text}"
+                f"\n\nUser: {clean_question}"
+                f"\n\n(No information available, use your training knowledge about "
+                f"{_clean_product_name(product_name) if product_name else 'this product'}.)"
+            )
 
     result = await generate_with_fallback(prompt)
     if memory is not None:

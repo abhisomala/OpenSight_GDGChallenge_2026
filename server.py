@@ -13,6 +13,7 @@ from agents.research import close_active_browser as close_research_browser
 from agents.calendar import close_active_browser as close_calendar_browser
 from dotenv import load_dotenv
 from memory import SessionMemory
+import browser_manager
 
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
@@ -32,8 +33,6 @@ AGENT_LABELS = {
 SHOPPING_MEMORY_FILE = "shopping_memory.json"
 CONVERSATION_HISTORY_FILE = "conversation_history.json"
 
-
-# ── Disk persistence helpers ───────────────────────────────────────────────────
 
 def _load_shopping_memory() -> dict:
     try:
@@ -71,7 +70,7 @@ def _save_conversation_history(history: list) -> None:
         print(f"[opensight] could not save conversation history: {e}")
 
 
-# ── Persistent state — survives WebSocket reconnects AND server restarts ───────
+# ── Persistent state ───────────────────────────────────────────────────────────
 _conversation_history: list = _load_conversation_history()
 _shopping_memory: dict = _load_shopping_memory()
 _last_intent: str = ""
@@ -79,9 +78,7 @@ _session_memory: SessionMemory = SessionMemory.load()
 
 
 def close_all_browsers():
-    close_shopping_browser()
-    close_research_browser()
-    close_calendar_browser()
+    browser_manager.close_all()
 
 
 def _is_short_actionable_text(text: str, shopping_mem: dict) -> bool:
@@ -99,20 +96,19 @@ def _is_short_actionable_text(text: str, shopping_mem: dict) -> bool:
         "this one" in t,
     ])
 
+
 def _is_garbled(text: str) -> bool:
     words = text.split()
-    # fragment patterns — starts or ends mid-thought
-    if text.endswith("?") and len(words) < 5:
+    if text.strip().endswith("?") and len(words) < 5:
         return True
-    # contains common STT fragment markers
     fragments = ["can you", "try finding", "in?", "that in"]
     if sum(1 for f in fragments if f in text.lower()) >= 2:
         return True
     return False
-def _is_research_followup(text: str) -> bool:
-    if not research_memory["last_papers"]:
-        return False
-    return _is_followup(text)
+
+
+def _has_active_shopping_context(shopping_mem: dict) -> bool:
+    return bool((shopping_mem or {}).get("last_results"))
 
 
 async def send_status(ws: WebSocket, agent: str, state: str, detail: str = "") -> None:
@@ -133,8 +129,6 @@ async def run_agent(
     status_cb=None,
     memory=None,
 ) -> tuple[str, dict | None]:
-    if last_intent and intent != last_intent:
-        close_all_browsers()
     if intent == "SHOPPING":
         result = await run_shopping_agent(query, shopping_mem, memory=memory)
         if isinstance(result, tuple):
@@ -161,18 +155,29 @@ async def websocket_endpoint(ws: WebSocket):
             message = json.loads(data)
             user_text = message.get("text", "")
 
-            if _is_garbled(user_text) or (len(user_text.split()) < 4 and not _is_short_actionable_text(user_text, _shopping_memory)):
-                await ws.send_text(json.dumps({"type": "response", "text": "I didn't catch that. Could you say that again?"}))
+            if _is_garbled(user_text) or (
+                len(user_text.split()) < 4
+                and not _is_short_actionable_text(user_text, _shopping_memory)
+            ):
+                await ws.send_text(json.dumps({
+                    "type": "response",
+                    "text": "I didn't catch that. Could you say that again?"
+                }))
                 await send_status(ws, "IDLE", "idle")
                 continue
-            
+
             print(f"[opensight] received: {user_text}")
             await send_status(ws, "BRAIN", "thinking", "routing")
 
             _session_memory.add_turn("user", user_text)
 
             try:
-                if _is_research_followup(user_text):
+                # ── follow-up priority: shopping beats research ──
+                # If the user has active shopping results, NEVER override to research.
+                # Only fall through to research follow-up if shopping context is absent.
+                shopping_followup_active = _has_active_shopping_context(_shopping_memory)
+
+                if not shopping_followup_active and _is_followup(user_text) and research_memory["last_papers"]:
                     print(f"[opensight] research follow-up override")
                     steps = [{"intent": "RESEARCH", "query": user_text}]
                 else:
@@ -182,6 +187,7 @@ async def websocket_endpoint(ws: WebSocket):
                         memory=_session_memory,
                         shopping_memory=_shopping_memory,
                     )
+
                 print(f"[opensight] plan: {steps}")
 
                 all_responses = []
@@ -195,7 +201,12 @@ async def websocket_endpoint(ws: WebSocket):
                         query = query.replace("{{PREVIOUS_RESULT}}", previous_result)
 
                     label = AGENT_LABELS.get(intent, "thinking")
-                    await send_status(ws, intent if intent in AGENT_LABELS else "GENERAL", "thinking", label)
+                    await send_status(
+                        ws,
+                        intent if intent in AGENT_LABELS else "GENERAL",
+                        "thinking",
+                        label,
+                    )
 
                     print(f"[opensight] step {i+1}: {intent} | query: {query}")
 
@@ -222,10 +233,10 @@ async def websocket_endpoint(ws: WebSocket):
                 if len(all_responses) == 1:
                     final_response = all_responses[0]
                 else:
-                    combine_prompt = f"""
-Combine these into one 2-sentence spoken response. No filler. No lists.
-{chr(10).join([f"{r}" for r in all_responses])}
-"""
+                    combine_prompt = (
+                        "Combine these into one 2-sentence spoken response. No filler. No lists.\n"
+                        + "\n".join(all_responses)
+                    )
                     final_response = await generate_with_fallback(combine_prompt)
 
             except Exception as e:
