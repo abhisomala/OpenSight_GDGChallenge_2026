@@ -1,0 +1,10 @@
+﻿.env
+.venv/
+__pycache__/
+*.pyc
+shopping_memory.json
+conversation_history.json
+opensight_memory.json
+token.json
+credentials.json
+*.ico
