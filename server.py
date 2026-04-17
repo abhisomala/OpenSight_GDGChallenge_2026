@@ -14,6 +14,7 @@ from agents.calendar import close_active_browser as close_calendar_browser
 from dotenv import load_dotenv
 from memory import SessionMemory
 import browser_manager
+import re
 import sys
 
 if "--fresh" in sys.argv:
