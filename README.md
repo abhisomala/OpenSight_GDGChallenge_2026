@@ -32,13 +32,15 @@ This is not a niche problem. It is a systemic exclusion from the modern web.
 
 ## The Results
 
-OpenSight completes the same product research and selection task **5× faster than the average screen reader user, and up to 10× faster for beginners**, reducing a 5–10 minute task to under 60 seconds.
+OpenSight completes the same product research and selection task **5× faster than the average screen reader user, and up to 10× faster for a first-time user**, reducing a 5–10 minute task to under 60 seconds.
 
 | User type | NVDA baseline | OpenSight | Speedup |
 |---|---|---|---|
-| Beginner | ~10 min | ~60 sec | **~10×** |
-| Average | ~5 min | ~60 sec | **~5×** |
-| Expert | ~2 min | ~60 sec | **~2×** |
+| Beginner (self-measured, first NVDA use) | ~10 min | ~60 sec | **~10×** |
+| Average *(Lazar et al., published literature)* | ~5 min | ~60 sec | **~5×** |
+| Expert *(published literature)* | ~2 min | ~60 sec | **~2×** |
+
+The beginner baseline was measured directly: with no prior NVDA experience, completing the same omega-3 supplement search task on Amazon took approximately 10 minutes. OpenSight completed the identical task in under 60 seconds.
 
 This is an **80–90% reduction in interaction time**. The gain is not speed of speech. It is the elimination of navigation overhead entirely. OpenSight collapses a multi-step linear navigation problem into a single intent-to-action pipeline.
 
@@ -54,7 +56,11 @@ Users speak naturally. OpenSight understands intent, navigates autonomously, and
 
 ### What makes it different
 
-**Cross-agent memory:** After a research query, OpenSight automatically carries that context into a follow-up shopping search. The user says *"find me a supplement for that"* and OpenSight already knows what "that" is.
+Existing tools like NVDA and JAWS read interfaces linearly and have no awareness of context between tasks. Apple VoiceOver is mobile-first and does not navigate desktop web flows autonomously. Even ChatGPT and general voice assistants cannot open a browser, navigate search results, and carry context from one query into the next without being told every step explicitly.
+
+OpenSight does all of this with a single spoken sentence per step.
+
+**Cross-agent memory:** After a research query, OpenSight automatically carries that context into a follow-up shopping search. The user says *"find me a supplement for that"* and OpenSight already knows what "that" is. No existing screen reader or voice assistant does this.
 
 **Live page awareness:** When a product page opens, OpenSight scrapes it in real time. Asking *"what are the ingredients"* returns the actual ingredient list from the open page, not a generic web search.
 
@@ -64,7 +70,7 @@ Users speak naturally. OpenSight understands intent, navigates autonomously, and
 
 ## Interface
 
-![OpenSight UI - reasoning flow panel active during a research query](assets/icons/frontend.png)
+![OpenSight UI - reasoning flow panel active during a research query](assets/icons/frontend.png.png)
 
 ---
 
@@ -155,11 +161,22 @@ Independence is directly correlated with mental health outcomes for people with 
 
 ## User Testing
 
-OpenSight was tested using simulated visual impairment methodology. Participants completed an identical product research task blindfolded using NVDA with no prior training, then using OpenSight with no prior training.
+OpenSight was tested across two groups.
 
-This approach is a standard technique in HCI accessibility research that allows structured before/after comparison with controlled conditions.
+**Self-measured baseline:** With no prior NVDA experience, the same product research task on Amazon took approximately 10 minutes using a screen reader. The identical task took under 60 seconds with OpenSight. This is a direct, first-person timed comparison under controlled conditions.
+
+**Survey-based testing (10 participants so far):** Participants experienced OpenSight live and completed a structured feedback form immediately after.
+
+- Average speed improvement rating: **7.9 / 10**
+- Average navigation replacement rating: **8.1 / 10**
+- Task completion rate: **10 / 10 participants completed the full demo task without assistance**
+- 80% said they would use a voice-first interface daily or for specific tasks
+
+Methodology note: participants are sighted users experiencing a simulated accessibility context, which is a standard technique in HCI accessibility research. A follow-up study with visually impaired participants is planned.
 
 *Full results and participant quotes available in the submission form.*
+
+**Clean install verified:** The full setup from a fresh clone has been tested and confirmed working.
 
 ---
 
