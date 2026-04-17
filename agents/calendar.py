@@ -1,3 +1,4 @@
+# Google technology: Uses Google Calendar API and Gemini 2.5 Flash (via router helper).
 import os
 import datetime
 import json
