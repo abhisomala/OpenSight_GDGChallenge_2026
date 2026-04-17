@@ -1,3 +1,4 @@
+# Google technology: Uses Google Custom Search API and Gemini 2.5 Flash (via router helper).
 import os
 import re
 import httpx

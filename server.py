@@ -14,7 +14,15 @@ from agents.calendar import close_active_browser as close_calendar_browser
 from dotenv import load_dotenv
 from memory import SessionMemory
 import browser_manager
+import sys
 
+if "--fresh" in sys.argv:
+    for f in ["shopping_memory.json", "conversation_history.json", "opensight_memory.json"]:
+        if os.path.exists(f):
+            os.remove(f)
+            print(f"[fresh] deleted {f}")
+    sys.argv.remove("--fresh")
+    
 if sys.platform == "win32":
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
 
@@ -97,10 +105,21 @@ def _is_short_actionable_text(text: str, shopping_mem: dict) -> bool:
     ])
 
 
+_ACTIONABLE_SHORT = re.compile(
+    r"\b(first|second|third|1st|2nd|3rd|open|yes|no|stop|repeat|"
+    r"select|choose|buy|next|back|that one|this one|option)\b",
+    re.IGNORECASE,
+)
+
 def _is_garbled(text: str) -> bool:
     words = text.split()
+    # under 3 words and not a known short command → almost certainly noise
+    if len(words) < 3 and not _ACTIONABLE_SHORT.search(text):
+        return True
+    # ends mid-question with very few words
     if text.strip().endswith("?") and len(words) < 5:
         return True
+    # common STT fragment patterns
     fragments = ["can you", "try finding", "in?", "that in"]
     if sum(1 for f in fragments if f in text.lower()) >= 2:
         return True

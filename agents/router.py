@@ -1,3 +1,4 @@
+# Uses Gemini 2.5 Flash (Google technology) for intent routing and generation.
 import os
 import json
 import re
