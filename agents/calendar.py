@@ -1,4 +1,4 @@
-# Google technology: Uses Google Calendar API and Gemini 2.5 Flash (via router helper).
+"""Read and create Google Calendar events from natural-language requests."""
 import os
 import datetime
 import json
@@ -19,6 +19,7 @@ _active_browser: dict | None = None
 
 
 def close_active_browser():
+    """Close the active calendar browser if one exists."""
     global _active_browser
     if _active_browser:
         _active_browser["close"] = True
@@ -26,6 +27,7 @@ def close_active_browser():
 
 
 def get_calendar_service():
+    """Build an authenticated Google Calendar service client."""
     creds = None
     if os.path.exists('token.json'):
         creds = Credentials.from_authorized_user_file('token.json', SCOPES)
@@ -33,6 +35,7 @@ def get_calendar_service():
         if creds and creds.expired and creds.refresh_token:
             creds.refresh(Request())
         else:
+            # Google technology: Google Calendar API.
             flow = InstalledAppFlow.from_client_secrets_file('credentials.json', SCOPES)
             creds = flow.run_local_server(port=0)
         with open('token.json', 'w') as token:
@@ -41,6 +44,7 @@ def get_calendar_service():
 
 
 def _open_calendar_browser(result_holder: dict) -> None:
+    """Open Google Calendar in a browser window and keep it alive."""
     try:
         import subprocess
         import time
@@ -59,6 +63,7 @@ def _open_calendar_browser(result_holder: dict) -> None:
 
 
 async def run_calendar_agent(query: str, memory=None) -> str:
+    """Parse a calendar request and create or list events."""
     global _active_browser
 
     # inject shared memory so Gemini can fill in "take it" / "that product" references
@@ -84,10 +89,9 @@ Tomorrow is: {datetime.date.today() + datetime.timedelta(days=1)}
 
     try:
         raw = re.sub(r"```json|```", "", await generate_with_fallback(parse_prompt)).strip()
-        print(f"[calendar] parsed: {raw}")
         details = json.loads(raw)
     except Exception as e:
-        print(f"[calendar] parse error: {e}")
+        print("[calendar] parse error")
         return "Sorry, I couldn't understand that calendar request. Try saying something like 'schedule a meeting tomorrow at 2pm'."
 
     # open browser
@@ -98,7 +102,7 @@ Tomorrow is: {datetime.date.today() + datetime.timedelta(days=1)}
     try:
         service = get_calendar_service()
     except Exception as e:
-        print(f"[calendar] service error: {e}")
+        print("[calendar] service error")
         return "I couldn't connect to Google Calendar. Make sure you're authenticated."
 
     if details.get("action") == "create":
@@ -128,7 +132,7 @@ Tomorrow is: {datetime.date.today() + datetime.timedelta(days=1)}
             return response
 
         except Exception as e:
-            print(f"[calendar] create error: {e}")
+            print("[calendar] create error")
             return "I ran into an issue creating that event. Try again."
 
     else:
@@ -166,5 +170,5 @@ Tomorrow is: {datetime.date.today() + datetime.timedelta(days=1)}
             return response
 
         except Exception as e:
-            print(f"[calendar] list error: {e}")
+            print("[calendar] list error")
             return "I couldn't fetch your calendar events. Try again."

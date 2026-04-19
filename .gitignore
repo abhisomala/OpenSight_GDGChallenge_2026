@@ -8,3 +8,4 @@ opensight_memory.json
 token.json
 credentials.json
 *.ico
+.DS_Store

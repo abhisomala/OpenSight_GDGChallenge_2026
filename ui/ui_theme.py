@@ -1,3 +1,4 @@
+"""Theme, palette, and shared color helpers for the OpenSight canvas UI."""
 import os
 import math
 import time
@@ -7,12 +8,15 @@ class ThemeMixin:
     """Color, theme, and style helpers shared across all draw methods."""
 
     def _caps(self, text):
+        """Uppercase a label for canvas headings."""
         return str(text).upper()
 
     def _check_service(self, key):
+        """Check whether an environment service key is set."""
         return bool(os.getenv(key, "").strip())
 
     def _theme(self) -> dict:
+        """Return the active light or dark theme palette."""
         if self.state.ui_mode == "dark":
             return {
                 "background": "#0b1826", "rail": "#111f2e", "rail_border": "#1e3347",
@@ -66,6 +70,7 @@ class ThemeMixin:
         }
 
     def _lerp_color(self, c1, c2, t):
+        """Blend two hex colors by interpolation factor t."""
         def h2r(h):
             h = h.lstrip("#")
             return tuple(int(h[i:i+2], 16) for i in (0, 2, 4))
@@ -74,6 +79,7 @@ class ThemeMixin:
         return f"#{int(r1+(r2-r1)*t):02x}{int(g1+(g2-g1)*t):02x}{int(b1+(b2-b1)*t):02x}"
 
     def _orb_color_for_agent(self):
+        """Return orb colors for the current active agent."""
         agent = self.state.agent_focus
         dark = self.state.ui_mode == "dark"
         colors = {
@@ -86,6 +92,7 @@ class ThemeMixin:
         return colors.get(agent, ("#1a3a52", "#88cbe8") if dark else ("#caeaf8", "#e5f8ff"))
 
     def _orb_label(self):
+        """Return the current orb status label."""
         s = self.state
         if self.is_thinking:
             labels = {
@@ -100,6 +107,7 @@ class ThemeMixin:
         return "IDLE"
 
     def _agent_card_colors(self, agent, active):
+        """Return the color palette for an agent card."""
         if self.state.ui_mode == "dark":
             palette = {
                 "BRAIN":    ("#173149", "#2f5574", "#8eb9d4", "#7290a3", "#7fb7de"),
@@ -135,6 +143,7 @@ class ThemeMixin:
         return inactive.get(agent, ("#edf2f5", "#cbd6df", "#586f7e", "#8798a6", "#91b8cb"))
 
     def _agent_glow_color(self, agent):
+        """Return the glow color for an active agent card."""
         dark = self.state.ui_mode == "dark"
         d = {"BRAIN": "#0a1e3a", "SHOPPING": "#0a1e12", "CALENDAR": "#1e1400",
              "RESEARCH": "#120a28", "GENERAL": "#0a1420"}

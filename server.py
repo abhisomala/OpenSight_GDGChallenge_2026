@@ -1,3 +1,4 @@
+"""FastAPI WebSocket server that routes messages to OpenSight agents."""
 import asyncio
 import sys
 import json
@@ -21,7 +22,6 @@ if "--fresh" in sys.argv:
     for f in ["shopping_memory.json", "conversation_history.json", "opensight_memory.json"]:
         if os.path.exists(f):
             os.remove(f)
-            print(f"[fresh] deleted {f}")
     sys.argv.remove("--fresh")
     
 if sys.platform == "win32":
@@ -44,6 +44,7 @@ CONVERSATION_HISTORY_FILE = "conversation_history.json"
 
 
 def _load_shopping_memory() -> dict:
+    """Load saved shopping memory from disk."""
     try:
         if os.path.exists(SHOPPING_MEMORY_FILE):
             with open(SHOPPING_MEMORY_FILE, "r") as f:
@@ -54,14 +55,16 @@ def _load_shopping_memory() -> dict:
 
 
 def _save_shopping_memory(mem: dict) -> None:
+    """Persist shopping memory to disk."""
     try:
         with open(SHOPPING_MEMORY_FILE, "w") as f:
             json.dump(mem, f)
     except Exception as e:
-        print(f"[opensight] could not save shopping memory: {e}")
+        print("[opensight] could not save shopping memory")
 
 
 def _load_conversation_history() -> list:
+    """Load recent conversation history from disk."""
     try:
         if os.path.exists(CONVERSATION_HISTORY_FILE):
             with open(CONVERSATION_HISTORY_FILE, "r") as f:
@@ -72,11 +75,12 @@ def _load_conversation_history() -> list:
 
 
 def _save_conversation_history(history: list) -> None:
+    """Persist recent conversation history to disk."""
     try:
         with open(CONVERSATION_HISTORY_FILE, "w") as f:
             json.dump(history, f)
     except Exception as e:
-        print(f"[opensight] could not save conversation history: {e}")
+        print("[opensight] could not save conversation history")
 
 
 # ── Persistent state ───────────────────────────────────────────────────────────
@@ -87,10 +91,12 @@ _session_memory: SessionMemory = SessionMemory.load()
 
 
 def close_all_browsers():
+    """Close all tracked browser windows."""
     browser_manager.close_all()
 
 
 def _is_short_actionable_text(text: str, shopping_mem: dict) -> bool:
+    """Detect short actionable shopping replies."""
     t = (text or "").strip().lower()
     if not t:
         return False
@@ -113,6 +119,7 @@ _ACTIONABLE_SHORT = re.compile(
 )
 
 def _is_garbled(text: str) -> bool:
+    """Detect likely ASR noise or partial utterances."""
     words = text.split()
     # under 3 words and not a known short command → almost certainly noise
     if len(words) < 3 and not _ACTIONABLE_SHORT.search(text):
@@ -128,10 +135,12 @@ def _is_garbled(text: str) -> bool:
 
 
 def _has_active_shopping_context(shopping_mem: dict) -> bool:
+    """Check whether shopping results are still available."""
     return bool((shopping_mem or {}).get("last_results"))
 
 
 async def send_status(ws: WebSocket, agent: str, state: str, detail: str = "") -> None:
+    """Send a status event to the desktop client."""
     await ws.send_text(json.dumps({
         "type": "status",
         "agent": agent,
@@ -149,6 +158,7 @@ async def run_agent(
     status_cb=None,
     memory=None,
 ) -> tuple[str, dict | None]:
+    """Run one agent step and return the response plus memory update."""
     if intent == "SHOPPING":
         result = await run_shopping_agent(query, shopping_mem, memory=memory)
         if isinstance(result, tuple):
@@ -164,6 +174,7 @@ async def run_agent(
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
+    """Handle one OpenSight client WebSocket session."""
     global _conversation_history, _shopping_memory, _last_intent, _session_memory
 
     await ws.accept()
@@ -186,7 +197,7 @@ async def websocket_endpoint(ws: WebSocket):
                 await send_status(ws, "IDLE", "idle")
                 continue
 
-            print(f"[opensight] received: {user_text}")
+            print("[opensight] received user message")
             await send_status(ws, "BRAIN", "thinking", "routing")
 
             _session_memory.add_turn("user", user_text)
@@ -198,7 +209,6 @@ async def websocket_endpoint(ws: WebSocket):
                 shopping_followup_active = _has_active_shopping_context(_shopping_memory)
 
                 if not shopping_followup_active and _is_followup(user_text) and research_memory["last_papers"]:
-                    print(f"[opensight] research follow-up override")
                     steps = [{"intent": "RESEARCH", "query": user_text}]
                 else:
                     steps = await plan_intent(
@@ -207,8 +217,6 @@ async def websocket_endpoint(ws: WebSocket):
                         memory=_session_memory,
                         shopping_memory=_shopping_memory,
                     )
-
-                print(f"[opensight] plan: {steps}")
 
                 all_responses = []
                 previous_result = ""
@@ -227,8 +235,6 @@ async def websocket_endpoint(ws: WebSocket):
                         "thinking",
                         label,
                     )
-
-                    print(f"[opensight] step {i+1}: {intent} | query: {query}")
 
                     async def _research_status(msg: str):
                         try:
@@ -260,10 +266,8 @@ async def websocket_endpoint(ws: WebSocket):
                     final_response = await generate_with_fallback(combine_prompt)
 
             except Exception as e:
-                import traceback
-                traceback.print_exc()
                 final_response = f"Sorry, I ran into an issue: {str(e)}"
-                print(f"[opensight] error: {e}")
+                print("[opensight] error")
 
             _conversation_history.append({"user": user_text, "assistant": final_response})
             if len(_conversation_history) > 10:

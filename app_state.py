@@ -1,3 +1,4 @@
+"""Shared runtime state and persisted UI preferences for OpenSight."""
 import queue
 import threading
 import json
@@ -5,7 +6,9 @@ import os
 import time
 
 class AppState:
+    """Store live app state, voice settings, and UI persistence paths."""
     def __init__(self):
+        """Initialize the default application state."""
         self.listening = False
         self.stop_event = threading.Event()
         self.shutdown_event = threading.Event()
@@ -55,6 +58,7 @@ class AppState:
         self.orb_r = 0
 
     def load_ui_preferences(self) -> None:
+        """Load UI preferences from disk into memory."""
         try:
             with open(self.ui_config_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
@@ -70,6 +74,7 @@ class AppState:
             self.username = username.strip()
 
     def save_ui_preferences(self) -> None:
+        """Save UI preferences to disk."""
         data = {
             "ui_mode": self.ui_mode,
             "username": self.username,

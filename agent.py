@@ -1,3 +1,4 @@
+"""WebSocket agent bridge for intent routing and spoken responses."""
 import asyncio
 import json
 
@@ -8,6 +9,7 @@ except Exception:
 
 
 def process_recognized_text(state, text: str, session_token: int, on_response_cb, safe_after_cb, status_cb=None):
+    """Handle recognized text and queue the assistant response."""
     if session_token != state.session_token:
         return
     if not text or not text.strip():
@@ -39,6 +41,7 @@ def process_recognized_text(state, text: str, session_token: int, on_response_cb
 
 
 def query_agent_response(state, user_text: str, session_token: int, safe_after_cb, status_cb=None) -> str:
+    """Request one assistant response and return it."""
     if websockets is None:
         return ""
     try:
@@ -49,6 +52,7 @@ def query_agent_response(state, user_text: str, session_token: int, safe_after_c
 
 
 async def _query_agent_response_async(state, user_text: str, session_token: int, safe_after_cb, status_cb=None) -> str:
+    """Stream WebSocket agent messages and return the final response."""
     safe_after_cb(0, set_agent_status, state, "BRAIN", "thinking", "routing")
     try:
         async with websockets.connect(state.agent_ws_url, open_timeout=5, close_timeout=1) as ws:
@@ -96,6 +100,7 @@ AGENT_ORDER = ["BRAIN", "SHOPPING", "CALENDAR", "RESEARCH", "GENERAL"]
 
 
 def set_agent_status(state, agent: str, s: str, detail: str = "") -> None:
+    """Update the current agent focus and phase."""
     normalized_agent = normalize_agent(agent)
     normalized_state = s.strip().lower() if s else "idle"
     state.agent_focus = normalized_agent
@@ -103,6 +108,7 @@ def set_agent_status(state, agent: str, s: str, detail: str = "") -> None:
 
 
 def normalize_agent(agent: str) -> str:
+    """Normalize agent labels to canonical values."""
     normalized = agent.strip().upper() if agent else "IDLE"
     if normalized in {"ROUTER", "BRAIN", "PLANNER"}:
         return "BRAIN"
@@ -114,6 +120,7 @@ def normalize_agent(agent: str) -> str:
 
 
 def agent_from_detail(detail: str) -> str:
+    """Infer an agent name from status detail text."""
     lowered = detail.lower()
     if "amazon" in lowered or "shopping" in lowered:
         return "SHOPPING"

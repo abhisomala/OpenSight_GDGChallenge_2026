@@ -1,3 +1,4 @@
+"""Search Google Scholar and summarize research for follow-up use."""
 import os
 import re
 import threading
@@ -24,6 +25,7 @@ _NEW_SEARCH_TRIGGERS = re.compile(
 
 
 def close_active_browser():
+    """Close the active Scholar browser if one exists."""
     fn = research_memory.get("scholar_browser_close")
     if fn:
         try:
@@ -34,6 +36,7 @@ def close_active_browser():
 
 
 def _shorten_title(title: str) -> str:
+    """Shorten a paper title for spoken responses."""
     title = title.split(':')[0].strip()
     if len(title) > 50:
         title = title[:50].rsplit(' ', 1)[0]
@@ -41,6 +44,7 @@ def _shorten_title(title: str) -> str:
 
 
 def _extract_product_hint(papers: list, query: str) -> str:
+    """Infer a shopping hint from research papers and the query."""
     mappings = [
         (r"omega.?3|fish oil|dha|epa",         "omega-3 fish oil supplement"),
         (r"magnesium",                           "magnesium supplement"),
@@ -73,6 +77,7 @@ def _extract_product_hint(papers: list, query: str) -> str:
 
 
 def _build_response(papers: list) -> str:
+    """Build a short spoken summary for found papers."""
     if not papers:
         return "I couldn't find any papers on that."
     p1 = _shorten_title(papers[0].get('title', 'Unknown'))
@@ -83,10 +88,12 @@ def _build_response(papers: list) -> str:
 
 
 def _is_new_search(query: str) -> bool:
+    """Detect whether a query starts a new research search."""
     return bool(_NEW_SEARCH_TRIGGERS.search(query.strip()))
 
 
 def _is_followup(query: str) -> bool:
+    """Detect follow-up questions about earlier research results."""
     if not research_memory["last_papers"] or not research_memory["last_query"]:
         return False
     if _is_new_search(query):
@@ -106,6 +113,7 @@ def _is_followup(query: str) -> bool:
 
 
 def _launch_scholar_browser(url: str, holder: dict) -> None:
+    """Open Google Scholar in a browser and keep it alive."""
     try:
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=False, args=[
@@ -119,9 +127,9 @@ def _launch_scholar_browser(url: str, holder: dict) -> None:
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=15000)
             except Exception as nav_err:
-                print(f"[research] scholar nav note: {nav_err}")
+                pass
 
-            # grab HWND and bring browser to front
+            # Browser HWND polling waits for the new Chromium window.
             hwnd = browser_manager._find_chromium_hwnd(timeout=6.0)
             if hwnd:
                 browser_manager.set_browser_hwnd(hwnd)
@@ -131,12 +139,13 @@ def _launch_scholar_browser(url: str, holder: dict) -> None:
                 page.wait_for_timeout(500)
             browser.close()
     except Exception as e:
-        print(f"[research] scholar browser error: {e}")
+        print("[research] scholar browser error")
     finally:
         holder["done"] = True
 
 
 def _launch_paper_window(link: str) -> None:
+    """Open a research result page and keep the browser alive."""
     browser_manager.close_all()
     holder: dict = {"close": False, "done": False}
 
@@ -161,9 +170,9 @@ def _launch_paper_window(link: str) -> None:
             try:
                 page.goto(link, wait_until="domcontentloaded", timeout=15000)
             except Exception as nav_err:
-                print(f"[research] paper nav note: {nav_err}")
+                pass
 
-            # grab HWND and bring browser to front
+            # Browser HWND polling waits for the new Chromium window.
             hwnd = browser_manager._find_chromium_hwnd(timeout=6.0)
             if hwnd:
                 browser_manager.set_browser_hwnd(hwnd)
@@ -173,10 +182,11 @@ def _launch_paper_window(link: str) -> None:
                 page.wait_for_timeout(500)
             browser.close()
     except Exception as e:
-        print(f"[research] paper window error: {e}")
+        print("[research] paper window error")
 
 
 def _open_paper(index: int) -> str:
+    """Open a cached paper by index and return a status message."""
     papers = research_memory["last_papers"]
     if index >= len(papers):
         return "I don't have that paper."
@@ -189,6 +199,7 @@ def _open_paper(index: int) -> str:
 
 
 def _open_scholar_results(query: str) -> None:
+    """Open the current Google Scholar results in a browser."""
     browser_manager.close_all()
     url = f"https://scholar.google.com/scholar?q={query.replace(' ', '+')}"
     holder: dict = {"close": False, "done": False}
@@ -199,10 +210,11 @@ def _open_scholar_results(query: str) -> None:
     research_memory["scholar_browser_close"] = _close
     browser_manager.register(_close)
     threading.Thread(target=_launch_scholar_browser, args=(url, holder), daemon=True).start()
-    print(f"[research] opened Scholar tab: {url}")
+    print("[research] opened Scholar tab")
 
 
 async def run_research_agent(query: str, history: list = [], status_cb=None, memory=None) -> str:
+    """Search Scholar or answer follow-ups from cached research."""
     global research_memory
 
     async def _status(msg: str):
@@ -210,7 +222,7 @@ async def run_research_agent(query: str, history: list = [], status_cb=None, mem
             try:
                 await status_cb(msg)
             except Exception as e:
-                print(f"[research] status error: {e}")
+                print("[research] status error")
 
     if _is_followup(query) and research_memory["last_papers"]:
         q = query.lower()
@@ -228,7 +240,7 @@ async def run_research_agent(query: str, history: list = [], status_cb=None, mem
         if wants_open and open_index is not None:
             return _open_paper(open_index)
 
-        print(f"[research] follow-up detected, answering from memory")
+        print("[research] follow-up detected")
         await _status(f"Answering from memory · {len(research_memory['last_papers'])} papers cached")
 
         context = "\n\n".join([
@@ -268,7 +280,6 @@ User: "{query}"
             memory.add_turn("assistant", result, agent="research")
         return result
 
-    print(f"[research] new search: {query}")
     await _status("Building search query...")
 
     clean_query = re.sub(
@@ -284,10 +295,8 @@ User: "{query}"
     }
 
     await _status("Searching Google Scholar...")
-    print("[research] hitting SerpAPI...")
     search = GoogleSearch(params)
     results = search.get_dict()
-    print(f"[research] SerpAPI done, got {len(results.get('organic_results', []))} results")
     papers = results.get("organic_results", [])
 
     if not papers:
@@ -298,8 +307,6 @@ User: "{query}"
     research_memory["last_papers"] = papers
     research_memory["last_query"] = clean_query
     resp = _build_response(papers)
-    print(f"[research] done: {resp[:60]}")
-
     _open_scholar_results(clean_query)
 
     if memory is not None:
@@ -309,7 +316,6 @@ User: "{query}"
         product_hint = _extract_product_hint(papers, clean_query)
         if product_hint:
             memory.entities["product_hint"] = product_hint
-            print(f"[research] product_hint stored: {product_hint}")
 
         stopwords = {"what", "find", "show", "tell", "about", "papers", "research",
                      "study", "some", "give", "recent", "latest", "best", "good"}

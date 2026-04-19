@@ -1,9 +1,4 @@
-"""
-browser_manager.py
-Central registry for all open browser windows.
-Tracks the last browser HWND so we can bring it to the foreground,
-and provides focus_opensight() so the desktop app can reclaim focus.
-"""
+"""Track browser windows and foreground focus for OpenSight."""
 import ctypes
 import ctypes.wintypes
 import time
@@ -14,26 +9,30 @@ _opensight_hwnd: int = 0  # set once by desktop_app on startup
 
 
 def set_opensight_hwnd(hwnd: int) -> None:
+    """Store the OpenSight window handle."""
     global _opensight_hwnd
     _opensight_hwnd = hwnd
 
 
 def set_browser_hwnd(hwnd: int) -> None:
+    """Store the latest browser window handle."""
     global _last_browser_hwnd
     _last_browser_hwnd = hwnd
 
 
 def register(close_fn) -> None:
+    """Register a browser close callback."""
     _close_callbacks.append(close_fn)
 
 
 def close_all() -> None:
+    """Close all registered browser windows."""
     global _close_callbacks
     for fn in _close_callbacks:
         try:
             fn()
         except Exception as e:
-            print(f"[browser_manager] close error: {e}")
+            print("[browser_manager] close error")
     _close_callbacks = []
 
 
@@ -54,7 +53,7 @@ def _force_foreground(hwnd: int) -> None:
         if fg_thread != our_thread:
             u32.AttachThreadInput(fg_thread, our_thread, False)
     except Exception as e:
-        print(f"[browser_manager] focus error: {e}")
+        print("[browser_manager] focus error")
 
 
 def focus_browser() -> None:

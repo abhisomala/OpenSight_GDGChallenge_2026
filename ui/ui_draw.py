@@ -1,3 +1,4 @@
+"""Canvas rendering routines for the OpenSight desktop interface."""
 import math
 import time
 import tkinter as tk
@@ -5,6 +6,7 @@ import tkinter as tk
 
 class DrawMixin:
     def _rounded_rect(self, x1, y1, x2, y2, radius, *, fill, outline, width=1):
+        """Draw a rounded rectangle on the canvas."""
         points = [x1+radius, y1, x2-radius, y1, x2, y1, x2, y1+radius,
                   x2, y2-radius, x2, y2, x2-radius, y2, x1+radius, y2,
                   x1, y2, x1, y2-radius, x1, y1+radius, x1, y1]
@@ -12,11 +14,13 @@ class DrawMixin:
                                       fill=fill, outline=outline, width=width)
 
     def _agent_detail(self, agent):
+        """Return the status subtitle for an agent card."""
         return {"BRAIN": "routing requests", "SHOPPING": "scanning options",
                 "CALENDAR": "checking schedules", "RESEARCH": "pulling sources",
                 "GENERAL": "composing responses"}.get(agent, "idle")
 
     def redraw(self, event=None):
+        """Redraw the entire OpenSight interface."""
         s = self.state
         theme = self._theme()
         self._sync_reasoning_status()
@@ -158,12 +162,14 @@ class DrawMixin:
                                        width=ai_text_w, justify="center", anchor="center")
 
     def _draw_dot_pattern(self, x0, y0, x1, y1, theme):
+        """Draw the decorative dotted background pattern."""
         dc = theme["dot_pattern"]
         for gx in range(x0 + 14, x1, 28):
             for gy in range(y0 + 14, y1, 28):
                 self.bg_canvas.create_oval(gx-1, gy-1, gx+1, gy+1, fill=dc, outline="")
 
     def _draw_mic_meter(self, cx, y, width, theme):
+        """Draw the microphone input meter."""
         bw = int(width * 0.5)
         x1, x2 = cx - bw//2, cx + bw//2
         self.bg_canvas.create_rectangle(x1, y, x2, y+4, fill=theme["meter_bg"], outline="")
@@ -172,6 +178,7 @@ class DrawMixin:
             self.bg_canvas.create_rectangle(x1, y, x1+fw, y+4, fill=theme["meter_fill"], outline="")
 
     def _draw_progress_bar(self, cx, y, width, theme):
+        """Draw the assistant typing progress bar."""
         if not self.ai_animation_target:
             return
         bw = int(width * 0.4)
@@ -182,6 +189,7 @@ class DrawMixin:
             self.bg_canvas.create_rectangle(x1, y, x1+fw, y+2, fill=theme["progress_fill"], outline="")
 
     def _draw_waveform(self, cx, y, theme):
+        """Draw the speaking waveform visualization."""
         bar_w, gap, max_h, min_h = 8, 7, 28, 7
         start_x = cx - (5 * bar_w + 4 * gap) // 2
         base_light = "#8fd7ff" if self.state.ui_mode == "dark" else "#5ba6d5"
@@ -197,6 +205,7 @@ class DrawMixin:
                                radius=max(1, bar_w//2-1), fill=shine_col, outline="")
 
     def _draw_mic_icon(self, cx, cy, color):
+        """Draw the microphone icon inside the orb."""
         self.bg_canvas.create_oval(cx-9, cy-14, cx+9, cy+4, fill=color, outline="")
         self.bg_canvas.create_rectangle(cx-4, cy+1, cx+4, cy+14, fill=color, outline="")
         self.bg_canvas.create_arc(cx-12, cy-7, cx+12, cy+9, start=200, extent=140,
@@ -205,6 +214,7 @@ class DrawMixin:
         self.bg_canvas.create_line(cx-7, cy+21, cx+7, cy+21, fill=color, width=2)
 
     def _ensure_username_entry(self, x, y, width):
+        """Create or update the username entry widget."""
         theme = self._theme()
         if self.username_entry is None:
             self.username_entry = tk.Entry(self.bg_canvas, font=self.typo["body"], relief="flat")
@@ -220,12 +230,14 @@ class DrawMixin:
                                      window=self.username_entry)
 
     def _destroy_username_entry(self):
+        """Destroy the username entry widget if it exists."""
         if self.username_entry is not None:
             self.username_entry.destroy()
             self.username_entry = None
             self.username_window_id = None
 
     def _draw_agent_rail(self, rail_x, w, h):
+        """Draw the right-side agent rail and tab headers."""
         from agent import AGENT_ORDER
         theme = self._theme()
         cl, cr = rail_x + 14, w - 14
@@ -352,6 +364,7 @@ class DrawMixin:
     def _draw_settings_panel(self, left, right, h):
         from agent import AGENT_ORDER
         theme = self._theme()
+        """Draw the settings panel and its controls."""
         cw = right - left
         mid = (left + right) // 2
         self.bg_canvas.create_text(mid, 50, text=self._caps("Settings"),
@@ -441,6 +454,7 @@ class DrawMixin:
 
     def _reset_reasoning_chain(self):
         now = time.monotonic()
+        """Reset the reasoning step state for a new turn."""
         base = [("Classify intent","Waiting for request"),("Extract constraints","Waiting for request"),
                 ("Route to agent","Waiting for request"),("Execute task","Waiting for request"),
                 ("Generate response","Waiting for request")]
@@ -452,6 +466,7 @@ class DrawMixin:
 
     def _set_reasoning_step(self, index, status, summary=None, label=None):
         if index < 0 or index >= len(self.state.reasoning_steps): return
+        """Update one reasoning step's status and summary."""
         step = self.state.reasoning_steps[index]
         if label: step["label"] = label[:30]
         if summary: step["summary"] = summary[:44]
@@ -462,6 +477,7 @@ class DrawMixin:
 
     def _activate_reasoning_step(self, index, summary=None, label=None):
         for i in range(index): self._set_reasoning_step(i, "complete")
+        """Mark one reasoning step as active."""
         for i in range(index+1, len(self.state.reasoning_steps)):
             if self.state.reasoning_steps[i]["status"] != "complete":
                 self._set_reasoning_step(i, "pending")
@@ -469,14 +485,17 @@ class DrawMixin:
 
     def _complete_reasoning_step(self, index, summary=None):
         self._set_reasoning_step(index, "complete", summary=summary)
+        """Mark one reasoning step as complete."""
         if self.state.reasoning_active_index == index: self.state.reasoning_active_index = -1
 
     def _safe_agent_name(self, agent):
         return agent if agent in {"BRAIN","SHOPPING","CALENDAR","RESEARCH","GENERAL"} else "GENERAL"
+        """Return a safe display label for an agent name."""
 
     def _sync_reasoning_status(self):
         from agent import AGENT_ORDER
         current = (self.state.agent_focus, self.state.agent_phase)
+        """Synchronize the reasoning panel with current agent state."""
         if current == self._last_agent_status: return
         self._last_agent_status = current
         focus, phase = current
@@ -499,6 +518,7 @@ class DrawMixin:
 
     def _draw_reasoning_chain(self, left, right, top, bottom):
         theme = self._theme()
+        """Draw the reasoning step timeline in the sidebar."""
         pulse = (math.sin(time.monotonic() * 6.0) + 1.0) / 2.0
         self._rounded_rect(left+1,top+3,right+1,bottom+3,radius=14,fill=theme["reason_shadow"],outline="")
         self._rounded_rect(left,top,right,bottom,radius=14,fill=theme["reason_panel"],outline=theme["reason_edge"])
