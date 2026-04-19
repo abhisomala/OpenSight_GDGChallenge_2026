@@ -1,3 +1,4 @@
+"""Animation loops and response typing effects for the OpenSight UI."""
 import math
 import random
 import re
@@ -11,10 +12,12 @@ class AnimationMixin:
     # ── agent flash ──
 
     def trigger_agent_flash(self, agent):
+        """Trigger a brief highlight animation for one agent."""
         self.agent_flash[agent] = 8
         self._tick_agent_flash()
 
     def _tick_agent_flash(self):
+        """Advance the agent flash animation frame."""
         changed = False
         for agent in list(self.agent_flash.keys()):
             if self.agent_flash[agent] > 0:
@@ -29,9 +32,11 @@ class AnimationMixin:
     # ── mic level ──
 
     def _start_mic_level_loop(self):
+        """Start the simulated microphone level animation loop."""
         self._tick_mic_level()
 
     def _tick_mic_level(self):
+        """Update the microphone meter animation state."""
         if self.state.listening and not self.state.is_speaking:
             target = random.uniform(0.1, 0.9) if self.state.live_transcript else random.uniform(0.02, 0.3)
             self.mic_level_smooth += (target - self.mic_level_smooth) * 0.20
@@ -42,6 +47,7 @@ class AnimationMixin:
     # ── waveform ──
 
     def _start_speaking_visual(self):
+        """Start the speaking waveform animation."""
         self.is_speaking_visual = True
         self.waveform_mode = "active"
         self.waveform_amp_target = 0.92
@@ -49,6 +55,7 @@ class AnimationMixin:
         self._tick_waveform()
 
     def _stop_speaking_visual(self):
+        """Stop the speaking waveform animation."""
         self.is_speaking_visual = False
         if self.is_thinking:
             self.waveform_mode = "active"
@@ -68,6 +75,7 @@ class AnimationMixin:
         self.waveform_bars = [0.24, 0.36, 0.5, 0.36, 0.24]
 
     def _tick_waveform(self):
+        """Advance the waveform animation frame."""
         if self.is_speaking_visual and self.state.is_speaking:
             self.waveform_mode = "active"
             self.waveform_amp_target = 0.92
@@ -110,9 +118,11 @@ class AnimationMixin:
     # ── gradient ──
 
     def _start_gradient_loop(self):
+        """Start the background gradient animation loop."""
         self._tick_gradient()
 
     def _tick_gradient(self):
+        """Advance the background gradient animation."""
         self.gradient_phase = (self.gradient_phase + 0.006) % (math.pi * 2)
         self.redraw()
         self.gradient_job = self.root.after(self.motion["gradient_ms"], self._tick_gradient)
@@ -120,6 +130,7 @@ class AnimationMixin:
     # ── thinking ──
 
     def _start_thinking(self):
+        """Start the thinking animation state."""
         self.is_thinking = True
         self.ai_render_text = ""
         self.waveform_mode = "active"
@@ -131,6 +142,7 @@ class AnimationMixin:
         self._tick_thinking()
 
     def _stop_thinking(self):
+        """Stop the thinking animation state."""
         self.is_thinking = False
         self.research_status = ""
         if self.state.listening and not self.is_speaking_visual:
@@ -142,6 +154,7 @@ class AnimationMixin:
             self.thinking_job = None
 
     def _tick_thinking(self):
+        """Advance the thinking animation frame."""
         if not self.is_thinking:
             return
         self.thinking_step = (self.thinking_step + 1) % 4
@@ -151,6 +164,7 @@ class AnimationMixin:
     # ── AI response typing animation ──
 
     def _format_ai_response(self, text):
+        """Format assistant text for wrapped display."""
         cleaned = re.sub(r"\s+", " ", text).strip()
         if not cleaned:
             return ""
@@ -169,6 +183,7 @@ class AnimationMixin:
         return "\n".join(lines)
 
     def _extract_research_title(self, response, fallback):
+        """Extract a short research title from assistant text."""
         text = re.sub(r"\s+", " ", response).strip()
         for raw in re.split(r"[\n.!?]", text):
             line = re.sub(r"^[\-\u2022\d\.)\s]+", "", raw).strip()
@@ -177,6 +192,7 @@ class AnimationMixin:
         return fallback.strip()[:90]
 
     def _start_ai_response_animation(self, response):
+        """Start the typed response animation."""
         self.ai_animation_target = self._format_ai_response(response)
         self.ai_render_text = ""
         self.ai_animation_index = 0
@@ -191,11 +207,13 @@ class AnimationMixin:
         self._tick_ai_response_animation()
 
     def _tick_cursor_blink(self):
+        """Toggle the response cursor blink state."""
         self._cursor_visible = not self._cursor_visible
         self.redraw()
         self._cursor_job = self.root.after(530, self._tick_cursor_blink)
 
     def _tick_ai_response_animation(self):
+        """Advance the assistant response typing animation."""
         if self.ai_animation_index >= len(self.ai_animation_target):
             self._complete_reasoning_step(4, summary="Response ready")
             self.ai_animation_job = None
@@ -227,16 +245,19 @@ class AnimationMixin:
     # ── pulse ──
 
     def _start_pulse_loop(self):
+        """Start the listening pulse animation loop."""
         if self.pulse_job:
             self.root.after_cancel(self.pulse_job)
         self._pulse_tick()
 
     def _stop_pulse_loop(self):
+        """Stop the listening pulse animation loop."""
         if self.pulse_job:
             self.root.after_cancel(self.pulse_job)
             self.pulse_job = None
 
     def _pulse_tick(self):
+        """Advance the listening pulse animation frame."""
         if not self.state.listening:
             return
         self.state.pulse_step = (self.state.pulse_step + 1) % 30

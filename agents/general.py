@@ -1,4 +1,4 @@
-# Google technology: Uses Google Custom Search API and Gemini 2.5 Flash (via router helper).
+"""Answer general questions with Google search and Gemini synthesis."""
 import os
 import re
 import httpx
@@ -15,6 +15,7 @@ _CONTEXT_RE = re.compile(r'\[context:\s*([^\]]+)\]', re.IGNORECASE)
 
 
 def _parse_query(raw_query: str) -> tuple[str, str]:
+    """Split a query from any product context block."""
     match = _CONTEXT_RE.search(raw_query)
     if not match:
         return raw_query.strip(), ""
@@ -25,6 +26,7 @@ def _parse_query(raw_query: str) -> tuple[str, str]:
 
 
 def _clean_product_name(name: str) -> str:
+    """Clean product names for search and answer prompts."""
     name = re.sub(r'[®™©]', '', name)
     name = re.split(r'\s[-|]\s', name)[0]
     words = name.strip().split()
@@ -36,6 +38,7 @@ def _clean_product_name(name: str) -> str:
 
 
 def _build_search_query(clean_question: str, product_name: str) -> str:
+    """Build a focused Google search query."""
     if not product_name:
         return clean_question
     product = _clean_product_name(product_name)
@@ -97,12 +100,14 @@ def _build_scraped_context(details: dict, question: str) -> str:
 
 
 async def _search_web(query: str) -> str:
+    """Search Google Custom Search and return compact snippets."""
     api_key = os.getenv("GOOGLE_SEARCH_API_KEY")
     cx = os.getenv("GOOGLE_SEARCH_CX")
     if not api_key or not cx:
         return ""
     try:
         async with httpx.AsyncClient() as client:
+            # Google technology: Google Custom Search API.
             resp = await client.get(
                 "https://www.googleapis.com/customsearch/v1",
                 params={"key": api_key, "cx": cx, "q": query, "num": 5},
@@ -122,6 +127,7 @@ async def _search_web(query: str) -> str:
 
 
 async def run_general_agent(query: str, history: list = [], memory=None) -> str:
+    """Answer from scraped data, search results, or Gemini."""
     clean_question, product_name = _parse_query(query)
 
     # ── check scraped product page first ──────────────────────────────────────
@@ -130,8 +136,6 @@ async def run_general_agent(query: str, history: list = [], memory=None) -> str:
 
     if scraped and (scraped.get("ingredients") or scraped.get("bullets")):
         scraped_context = _build_scraped_context(scraped, clean_question)
-        print(f"[general] using scraped product data ({len(scraped.get('ingredients',''))} chars ingredients, "
-              f"{len(scraped.get('bullets',[]))} bullets)")
 
     history_text = ""
     if history:
@@ -156,11 +160,9 @@ async def run_general_agent(query: str, history: list = [], memory=None) -> str:
             f"\n\nINFORMATION FROM THE OPEN PRODUCT PAGE:\n{scraped_context}"
             f"\n\nAnswer this based on the product page information above: {clean_question}"
         )
-        print(f"[general] answering from scraped page data")
     else:
         # fall back to web search
         search_query = _build_search_query(clean_question, product_name)
-        print(f"[general] search query: {search_query}")
         search_results = await _search_web(search_query)
 
         if search_results:

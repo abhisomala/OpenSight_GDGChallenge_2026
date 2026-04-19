@@ -1,3 +1,4 @@
+"""Context tab rendering and document management for the OpenSight UI."""
 import tkinter as tk
 
 _TITLE_PH = "Document title..."
@@ -8,6 +9,7 @@ class ContextMixin:
     """Context tab — About You pills (removable), Recent bubbles, Documents."""
 
     def _draw_context_panel(self, left, right, h):
+        """Draw the context sidebar and its sections."""
         theme = self._theme()
         mid = (left + right) // 2
 
@@ -94,6 +96,7 @@ class ContextMixin:
                                    font=self.typo["mono_tiny"], anchor="center")
 
     def _tick_context_section_anim(self):
+        """Animate the open context section transition."""
         key = self.context_open_section
         changed = False
         for k in ("about", "recent", "documents"):
@@ -114,6 +117,7 @@ class ContextMixin:
     # ── About You ──────────────────────────────────────────────────────────────
 
     def _draw_context_about_content(self, x1, y, x2, body_h, theme, mem_prefs, mem_topics):
+        """Draw saved preferences and topic pills."""
         pad = 12
         cy = y + pad + 4
         inner_w = x2 - x1 - pad * 2
@@ -229,6 +233,7 @@ class ContextMixin:
     # ── Recent Context ─────────────────────────────────────────────────────────
 
     def _draw_context_recent_content(self, x1, y, x2, body_h, theme):
+        """Draw the recent conversation bubbles."""
         pad = 10
         cy = y + pad + 2
         s = self.state
@@ -282,6 +287,7 @@ class ContextMixin:
     # ── Documents ──────────────────────────────────────────────────────────────
 
     def _draw_documents_section_content(self, x1, y, x2, body_h, theme):
+        """Draw the document editor and saved notes list."""
         pad = 10
         inner_w = max(80, (x2-x1) - pad*2)
         self._ensure_context_doc_inputs(theme)
@@ -443,6 +449,7 @@ class ContextMixin:
     # ── input widgets ──────────────────────────────────────────────────────────
 
     def _ensure_context_doc_inputs(self, theme):
+        """Create the document input widgets when needed."""
         if self.context_doc_title_entry is None:
             self.context_doc_title_entry = tk.Entry(self.bg_canvas, font=self.typo["body"], relief="flat")
             self._setup_entry_placeholder(self.context_doc_title_entry, _TITLE_PH, theme)
@@ -460,6 +467,7 @@ class ContextMixin:
                             highlightthickness=0, relief="flat", bd=0)
 
     def _setup_entry_placeholder(self, entry, placeholder, theme):
+        """Attach placeholder behavior to an entry widget."""
         entry.insert(0, placeholder)
         entry.configure(fg=theme["muted"])
         def _fi(e, _e=entry, _p=placeholder):
@@ -476,6 +484,7 @@ class ContextMixin:
         entry.bind("<FocusOut>", _fo)
 
     def _destroy_context_doc_inputs(self):
+        """Destroy the document input widgets if they exist."""
         if self.context_doc_title_entry is not None:
             self.context_doc_title_entry.destroy()
             self.context_doc_title_entry = None
@@ -484,6 +493,7 @@ class ContextMixin:
             self.context_doc_note_entry = None
 
     def _add_context_document_from_inputs(self, event=None):
+        """Add a document from the context input fields."""
         title = (self.context_doc_title_entry.get().strip() if self.context_doc_title_entry else "")
         summary = (self.context_doc_note_entry.get().strip() if self.context_doc_note_entry else "")
         if title == _TITLE_PH: title = ""
@@ -508,12 +518,14 @@ class ContextMixin:
         return "break" if event is not None else None
 
     def _delete_context_document(self, index):
+        """Delete a saved context document by index."""
         if 0 <= index < len(self.context_documents):
             self.context_documents.pop(index)
             self.context_doc_hover_idx = -1
             self.redraw()
 
     def _clear_context_documents(self):
+        """Clear all saved context documents."""
         if self.context_documents:
             self.context_documents = []
             self.context_doc_hover_idx = -1

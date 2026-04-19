@@ -1,4 +1,4 @@
-# Uses Gemini 2.5 Flash (Google technology) for intent routing and generation.
+"""Route user intent with Gemini and coordinate cross-agent handoffs."""
 import os
 import json
 import re
@@ -6,7 +6,7 @@ from google import genai
 from dotenv import load_dotenv
 
 load_dotenv()
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))  # Google technology: Gemini API
 
 MODELS = [
     "gemini-2.5-flash",
@@ -106,6 +106,7 @@ def _has_recent_shopping_context(history: list | None, shopping_memory: dict | N
 # ── Gemini helpers ─────────────────────────────────────────────────────────────
 
 async def generate_with_fallback(contents: str) -> str:
+    """Generate text with Gemini, trying fallback models."""
     for model in MODELS:
         try:
             response = client.models.generate_content(model=model, contents=contents)
@@ -116,6 +117,7 @@ async def generate_with_fallback(contents: str) -> str:
 
 
 async def extract_preferences(query: str, memory) -> None:
+    """Extract and store preferences from a user query."""
     if len(query.split()) < 4:
         return
     prompt = (
@@ -160,6 +162,7 @@ async def plan_intent(
     memory=None,
     shopping_memory: dict | None = None,
 ) -> list:
+    """Plan one or more agent steps for a user message."""
     history = history or []
 
     if memory is not None:
@@ -171,12 +174,10 @@ async def plan_intent(
         if shopping_memory and shopping_memory.get("last_results"):
             last_product = shopping_memory["last_results"][0].get("title", "")
         enriched = f"{user_text} [context: user is looking at {last_product}]" if last_product else user_text
-        print(f"[router] product context question detected, routing to GENERAL")
         return [{"intent": "GENERAL", "query": enriched}]
 
     # ── shopping follow-up: pass original query unchanged ──
     if _has_recent_shopping_context(history, shopping_memory) and SHOPPING_FOLLOWUP_PATTERN.search(user_text):
-        print(f"[router] shopping follow-up detected, passing original query through")
         return [{"intent": "SHOPPING", "query": user_text}]
 
     # ── cross-agent: research → shopping handoff ──
@@ -194,11 +195,9 @@ async def plan_intent(
             )
             price_clause = f" {price_match.group(0)}" if price_match else ""
             enriched_query = f"{product_hint}{price_clause}"
-            print(f"[router] research→shopping handoff: '{enriched_query}'")
             return [{"intent": "SHOPPING", "query": enriched_query}]
         else:
             # no hint stored yet — still route to shopping with original query
-            print(f"[router] research→shopping handoff (no hint), passing query through")
             return [{"intent": "SHOPPING", "query": user_text}]
 
     # ── research follow-up: enrich with last research context ──

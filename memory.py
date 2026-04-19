@@ -1,3 +1,4 @@
+"""Persist cross-agent session memory and preferences between turns."""
 from __future__ import annotations
 
 import json
@@ -92,7 +93,7 @@ class SessionMemory:
                     "last_query":   self.last_query,
                 }, f, default=str, indent=2)
         except Exception as e:
-            print(f"[memory] save error: {e}")
+                print("[memory] save error")
 
     @classmethod
     def load(cls, path: str = "opensight_memory.json") -> "SessionMemory":
@@ -115,5 +116,5 @@ class SessionMemory:
                 last_query=data.get("last_query", ""),
             )
         except Exception as e:
-            print(f"[memory] load error: {e} — starting fresh")
+            print("[memory] load error — starting fresh")
             return cls()
