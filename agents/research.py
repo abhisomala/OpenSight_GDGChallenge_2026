@@ -1,4 +1,4 @@
-"""Search Google Scholar and summarize research for follow-up use."""
+"""Search Google Scholar and summarize research for follow-up use"""
 import os
 import re
 import threading

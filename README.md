@@ -68,7 +68,7 @@ OpenSight does all of this with a single spoken sentence per step.
 
 ## Interface
 
-![OpenSight UI - reasoning flow panel active during a research query](assets/icons/frontend.png)
+![OpenSight UI - reasoning flow panel active during a research query](assets/icons/frontend.png.png)
 
 ---
 
