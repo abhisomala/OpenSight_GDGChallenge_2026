@@ -1,7 +1,7 @@
 """Answer general questions with Google search and Gemini synthesis."""
 import os
 import re
-import httpx
+import aiohttp
 from agents.router import generate_with_fallback
 
 SYSTEM_PROMPT = """
@@ -82,7 +82,6 @@ def _build_scraped_context(details: dict, question: str) -> str:
         if details.get("ingredients"):
             parts.append(f"Ingredients: {details['ingredients']}")
         elif details.get("bullets"):
-            # bullets often contain ingredient/nutrition info
             relevant = [b for b in details["bullets"] if any(
                 w in b.lower() for w in ["ingredient", "contain", "made", "natural", "fish", "oil",
                                           "calorie", "protein", "carb", "fat", "sugar", "sodium"]
@@ -92,7 +91,6 @@ def _build_scraped_context(details: dict, question: str) -> str:
             else:
                 parts.append("Product features: " + " | ".join(details["bullets"][:4]))
     else:
-        # for other questions just give bullets
         if details.get("bullets"):
             parts.append("Product features: " + " | ".join(details["bullets"][:5]))
 
@@ -106,21 +104,22 @@ async def _search_web(query: str) -> str:
     if not api_key or not cx:
         return ""
     try:
-        async with httpx.AsyncClient() as client:
+        params = {"key": api_key, "cx": cx, "q": query, "num": 5}
+        async with aiohttp.ClientSession() as session:
             # Google technology: Google Custom Search API.
-            resp = await client.get(
+            async with session.get(
                 "https://www.googleapis.com/customsearch/v1",
-                params={"key": api_key, "cx": cx, "q": query, "num": 5},
-                timeout=8.0,
-            )
-            data = resp.json()
-            items = data.get("items", [])
-            if not items:
-                return ""
-            return "\n\n".join([
-                f"Title: {item.get('title')}\nSnippet: {item.get('snippet')}"
-                for item in items
-            ])
+                params=params,
+                timeout=aiohttp.ClientTimeout(total=8.0),
+            ) as resp:
+                data = await resp.json()
+                items = data.get("items", [])
+                if not items:
+                    return ""
+                return "\n\n".join([
+                    f"Title: {item.get('title')}\nSnippet: {item.get('snippet')}"
+                    for item in items
+                ])
     except Exception as e:
         print(f"[general] search error: {e}")
         return ""
@@ -153,7 +152,6 @@ async def run_general_agent(query: str, history: list = [], memory=None) -> str:
     if product_name:
         product_context_block = f"\n\nPRODUCT IN FOCUS: {_clean_product_name(product_name)}\n"
 
-    # if we have scraped data, use it directly — skip web search
     if scraped_context:
         prompt = (
             f"{SYSTEM_PROMPT}{mem_context_block}{product_context_block}{history_text}"
@@ -161,7 +159,6 @@ async def run_general_agent(query: str, history: list = [], memory=None) -> str:
             f"\n\nAnswer this based on the product page information above: {clean_question}"
         )
     else:
-        # fall back to web search
         search_query = _build_search_query(clean_question, product_name)
         search_results = await _search_web(search_query)
 
