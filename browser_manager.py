@@ -31,7 +31,7 @@ def close_all() -> None:
     for fn in _close_callbacks:
         try:
             fn()
-        except Exception as e:
+        except Exception:
             print("[browser_manager] close error")
     _close_callbacks = []
 
@@ -42,7 +42,6 @@ def _force_foreground(hwnd: int) -> None:
         return
     try:
         u32 = ctypes.windll.user32
-        # attach to foreground thread so SetForegroundWindow works
         fg_thread = u32.GetWindowThreadProcessId(u32.GetForegroundWindow(), None)
         our_thread = ctypes.windll.kernel32.GetCurrentThreadId()
         if fg_thread != our_thread:
@@ -52,7 +51,7 @@ def _force_foreground(hwnd: int) -> None:
         u32.BringWindowToTop(hwnd)
         if fg_thread != our_thread:
             u32.AttachThreadInput(fg_thread, our_thread, False)
-    except Exception as e:
+    except Exception:
         print("[browser_manager] focus error")
 
 
@@ -66,33 +65,48 @@ def focus_opensight() -> None:
     _force_foreground(_opensight_hwnd)
 
 
-def _find_chromium_hwnd(timeout: float = 8.0) -> int:
+def snapshot_chromium_hwnds() -> set[int]:
+    """Return the set of all currently visible Chromium HWNDs.
+
+    Call this BEFORE launching a new browser so _find_chromium_hwnd can
+    correctly identify the new window by diffing against this snapshot.
+    Previously the snapshot was taken inside _find_chromium_hwnd after
+    launch, meaning the new window was already present and never detected.
     """
-    Poll for a Chromium window that appeared after the browser launched.
-    Returns its HWND or 0 on timeout.
+    u32 = ctypes.windll.user32
+    hwnds: set[int] = set()
+
+    def _cb(hwnd, _):
+        buf = ctypes.create_unicode_buffer(256)
+        u32.GetClassNameW(hwnd, buf, 256)
+        if "Chrome_WidgetWin" in buf.value:
+            hwnds.add(hwnd)
+        return True
+
+    cb_type = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
+    u32.EnumWindows(cb_type(_cb), 0)
+    return hwnds
+
+
+def _find_chromium_hwnd(timeout: float = 8.0, seen_before: set | None = None) -> int:
+    """Poll for a Chromium window that appeared after a browser launched.
+
+    Pass seen_before=snapshot_chromium_hwnds() captured BEFORE p.chromium.launch()
+    so this function correctly identifies the new window. If seen_before is None
+    (legacy call sites), an empty set is used — still works when no Chrome was
+    open before launch, fragile when Chrome was already running.
+
+    Returns the HWND of the new visible window, or 0 on timeout.
     """
     u32 = ctypes.windll.user32
     deadline = time.monotonic() + timeout
-    seen_before: set[int] = set()
 
-    # snapshot windows before launch — we want NEW ones
-    def _snapshot():
-        hwnds: set[int] = set()
-        def _cb(hwnd, _):
-            buf = ctypes.create_unicode_buffer(256)
-            u32.GetClassNameW(hwnd, buf, 256)
-            if "Chrome_WidgetWin" in buf.value:
-                hwnds.add(hwnd)
-            return True
-        cb = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.wintypes.HWND, ctypes.wintypes.LPARAM)
-        u32.EnumWindows(cb(_cb), 0)
-        return hwnds
-
-    seen_before = _snapshot()
+    if seen_before is None:
+        seen_before = set()
 
     while time.monotonic() < deadline:
         time.sleep(0.4)
-        current = _snapshot()
+        current = snapshot_chromium_hwnds()
         new = current - seen_before
         for hwnd in new:
             if u32.IsWindowVisible(hwnd):

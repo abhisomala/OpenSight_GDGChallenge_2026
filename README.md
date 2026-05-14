@@ -1,4 +1,4 @@
-# README — Rewritten intro section
+# README
 Replace everything from `# OpenSight` through the end of `## The Problem` header
 with the text below. Everything after that stays as-is.
 

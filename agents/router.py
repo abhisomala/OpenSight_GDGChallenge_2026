@@ -1,5 +1,6 @@
 """Route user intent with Gemini and coordinate cross-agent handoffs."""
 import os
+import asyncio
 import json
 import re
 from google import genai
@@ -8,6 +9,8 @@ from dotenv import load_dotenv
 load_dotenv()
 client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))  # Google technology: Gemini API
 
+# Verify these strings match your pinned google-genai SDK version.
+# Run: python -c "from google import genai; help(genai)" to check accepted model names.
 MODELS = [
     "gemini-2.5-flash",
     "gemini-2.5-pro",
@@ -50,23 +53,35 @@ Keep all responses under 3 sentences. Be direct and concise.
 # ── Follow-up pattern matchers ─────────────────────────────────────────────────
 
 RESEARCH_FOLLOWUP_PATTERN = re.compile(
-    r"\b(author|who wrote|who made|first paper|second paper|that paper|the paper|tell me more|methodology|findings|published|journal|when was)\b",
+    r"\b(author|who wrote|who made|first paper|second paper|that paper|the paper|"
+    r"tell me more|methodology|findings|published|journal|when was)\b",
+    re.IGNORECASE,
+)
+
+# Matches open/select actions that include explicit paper/study/research words,
+# used to let research followup win over shopping followup when both contexts active.
+RESEARCH_EXPLICIT_PATTERN = re.compile(
+    r"\b(paper|study|studies|research|journal|that research|the research|"
+    r"first paper|second paper|that study|the study)\b",
     re.IGNORECASE,
 )
 
 SHOPPING_FOLLOWUP_PATTERN = re.compile(
-    r"\b(open|click|buy|select|choose|option\s*\d+|first|second|third|1st|2nd|3rd|that one|this one|the first one|the second one|the third one|repeat|tell me more|more about)\b",
+    r"\b(open|click|buy|select|choose|option\s*\d+|first|second|third|1st|2nd|3rd|"
+    r"that one|this one|the first one|the second one|the third one|repeat|tell me more|more about)\b",
     re.IGNORECASE,
 )
 
 SHOPPING_INTENT_PATTERN = re.compile(
-    r"\b(find|get|buy|order|search|look for|shop|show me|recommend|suggest|pick)\b.{0,30}\b(on amazon|supplement|product|pill|capsule|tablet|powder|oil|cream|gear|device|gadget|book|item)\b"
+    r"\b(find|get|buy|order|search|look for|shop|show me|recommend|suggest|pick)\b.{0,30}"
+    r"\b(on amazon|supplement|product|pill|capsule|tablet|powder|oil|cream|gear|device|gadget|book|item)\b"
     r"|\b(on amazon|under \$|less than \$|for under|find me|get me|buy me|order me)\b",
     re.IGNORECASE,
 )
 
 PRODUCT_CONTEXT_PATTERN = re.compile(
-    r"\b(ingredient|ingredients|nutrition|calories|allergen|contain|made of|what.s in|what is in|how much|serving|protein|carb|fat|sugar|sodium|fiber|review|rating|how many star)\b",
+    r"\b(ingredient|ingredients|nutrition|calories|allergen|contain|made of|what.s in|"
+    r"what is in|how much|serving|protein|carb|fat|sugar|sodium|fiber|review|rating|how many star)\b",
     re.IGNORECASE,
 )
 
@@ -88,6 +103,7 @@ def _has_recent_research_context(history: list | None, memory=None) -> bool:
 
 
 def _has_recent_shopping_context(history: list | None, shopping_memory: dict | None = None) -> bool:
+    """Check history AND shopping_memory for a recent Amazon result."""
     if shopping_memory and shopping_memory.get("last_results"):
         return True
     if not history:
@@ -106,10 +122,16 @@ def _has_recent_shopping_context(history: list | None, shopping_memory: dict | N
 # ── Gemini helpers ─────────────────────────────────────────────────────────────
 
 async def generate_with_fallback(contents: str) -> str:
-    """Generate text with Gemini, trying fallback models."""
+    """Generate text with Gemini via thread executor to avoid blocking the event loop."""
+    loop = asyncio.get_running_loop()
     for model in MODELS:
         try:
-            response = client.models.generate_content(model=model, contents=contents)
+            # client.models.generate_content is synchronous — run in executor
+            # so it doesn't stall the FastAPI event loop on every query.
+            response = await loop.run_in_executor(
+                None,
+                lambda m=model: client.models.generate_content(model=m, contents=contents),
+            )
             return response.text.strip()
         except Exception as e:
             print(f"[gemini] {model} failed: {e}, trying next...")
@@ -145,7 +167,9 @@ async def extract_preferences(query: str, memory) -> None:
         if new_prefs:
             memory.update_preferences(new_prefs)
         topics = prefs.get("topics") or []
-        existing_topics = set(memory.entities.get("topics", []))
+        # setdefault prevents KeyError if memory.entities was initialized without "topics"
+        memory.entities.setdefault("topics", [])
+        existing_topics = set(memory.entities["topics"])
         for t in topics:
             if t and t not in existing_topics:
                 memory.entities["topics"].append(t)
@@ -176,8 +200,24 @@ async def plan_intent(
         enriched = f"{user_text} [context: user is looking at {last_product}]" if last_product else user_text
         return [{"intent": "GENERAL", "query": enriched}]
 
-    # ── shopping follow-up: pass original query unchanged ──
-    if _has_recent_shopping_context(history, shopping_memory) and SHOPPING_FOLLOWUP_PATTERN.search(user_text):
+    # ── research followup wins over shopping followup when research words are present ──
+    # Checked BEFORE shopping followup to prevent "open the first paper" routing to Amazon.
+    if _has_recent_research_context(history, memory) and RESEARCH_FOLLOWUP_PATTERN.search(user_text):
+        last_research = ""
+        for turn in reversed(history):
+            if any(phrase in turn.get("assistant", "").lower() for phrase in
+                   ["paper", "study", "research", "journal"]):
+                last_research = turn.get("assistant", "")
+                break
+        enriched_query = f"{user_text} [context: {last_research}]" if last_research else user_text
+        return [{"intent": "RESEARCH", "query": enriched_query}]
+
+    # ── shopping follow-up: skip if query contains explicit paper/research words ──
+    if (
+        _has_recent_shopping_context(history, shopping_memory)
+        and SHOPPING_FOLLOWUP_PATTERN.search(user_text)
+        and not RESEARCH_EXPLICIT_PATTERN.search(user_text)
+    ):
         return [{"intent": "SHOPPING", "query": user_text}]
 
     # ── cross-agent: research → shopping handoff ──
@@ -188,7 +228,6 @@ async def plan_intent(
             product_hint = memory.entities.get("product_hint", "")
 
         if product_hint:
-            # preserve any price constraint the user stated
             price_match = re.search(
                 r"(under \$[\d]+|less than \$[\d]+|below \$[\d]+|under [\d]+|for under \$[\d]+)",
                 user_text, re.IGNORECASE
@@ -197,19 +236,7 @@ async def plan_intent(
             enriched_query = f"{product_hint}{price_clause}"
             return [{"intent": "SHOPPING", "query": enriched_query}]
         else:
-            # no hint stored yet — still route to shopping with original query
             return [{"intent": "SHOPPING", "query": user_text}]
-
-    # ── research follow-up: enrich with last research context ──
-    if _has_recent_research_context(history, memory) and RESEARCH_FOLLOWUP_PATTERN.search(user_text):
-        last_research = ""
-        for turn in reversed(history):
-            if any(phrase in turn.get("assistant", "").lower() for phrase in
-                   ["paper", "study", "research", "journal"]):
-                last_research = turn.get("assistant", "")
-                break
-        enriched_query = f"{user_text} [context: {last_research}]" if last_research else user_text
-        return [{"intent": "RESEARCH", "query": enriched_query}]
 
     # ── general Gemini routing ──
     history_text = ""

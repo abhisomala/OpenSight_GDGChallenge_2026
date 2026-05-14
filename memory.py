@@ -92,8 +92,8 @@ class SessionMemory:
                     "last_agent":   self.last_agent,
                     "last_query":   self.last_query,
                 }, f, default=str, indent=2)
-        except Exception as e:
-                print("[memory] save error")
+        except Exception:
+            print("[memory] save error")  # was double-indented in original
 
     @classmethod
     def load(cls, path: str = "opensight_memory.json") -> "SessionMemory":
@@ -115,6 +115,6 @@ class SessionMemory:
                 last_agent=data.get("last_agent", ""),
                 last_query=data.get("last_query", ""),
             )
-        except Exception as e:
+        except Exception:
             print("[memory] load error — starting fresh")
             return cls()

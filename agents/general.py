@@ -38,7 +38,12 @@ def _clean_product_name(name: str) -> str:
 
 
 def _build_search_query(clean_question: str, product_name: str) -> str:
-    """Build a focused Google search query."""
+    """Build a focused Google search query.
+
+    Previously defaulted to "ingredients" when no keyword matched, which
+    produced wrong results for non-food queries (e.g. warranty, price, specs).
+    Now falls back to the full clean question so Google has real context.
+    """
     if not product_name:
         return clean_question
     product = _clean_product_name(product_name)
@@ -48,8 +53,10 @@ def _build_search_query(clean_question: str, product_name: str) -> str:
         r'review|reviews|rating|ratings|side effect|dosage|dose)\b',
         clean_question, re.IGNORECASE
     )
-    key = keywords[0].lower() if keywords else "ingredients"
-    return f"{product} {key}"
+    if keywords:
+        return f"{product} {keywords[0].lower()}"
+    # Fall back to full question rather than hardcoded "ingredients"
+    return f"{product} {clean_question}"
 
 
 def _get_scraped_product_info() -> dict:
@@ -125,8 +132,17 @@ async def _search_web(query: str) -> str:
         return ""
 
 
-async def run_general_agent(query: str, history: list = [], memory=None) -> str:
-    """Answer from scraped data, search results, or Gemini."""
+async def run_general_agent(
+    query: str,
+    history: list | None = None,
+    memory=None,
+) -> str:
+    """Answer from scraped data, search results, or Gemini.
+
+    history defaults to None rather than [] to avoid the mutable default
+    argument pitfall — a shared [] would persist mutations across calls.
+    """
+    history = history or []
     clean_question, product_name = _parse_query(query)
 
     # ── check scraped product page first ──────────────────────────────────────
@@ -173,7 +189,7 @@ async def run_general_agent(query: str, history: list = [], memory=None) -> str:
                 f"{SYSTEM_PROMPT}{mem_context_block}{product_context_block}{history_text}"
                 f"\n\nUser: {clean_question}"
                 f"\n\n(No information available, use your training knowledge about "
-                f"{_clean_product_name(product_name) if product_name else 'this product'}.)"
+                f"{_clean_product_name(product_name) if product_name else 'this topic'}.)"
             )
 
     result = await generate_with_fallback(prompt)

@@ -122,7 +122,6 @@ def _parse_price(text: str):
 def _is_followup_query(query: str) -> bool:
     """Detect shopping follow-up or selection queries."""
     text = (query or "").lower()
-    # never treat a new search request as a followup
     if any(w in text for w in ["find me", "search for", "look for", "can you find", "get me", "show me"]):
         return False
     markers = [
@@ -178,6 +177,35 @@ def _build_product_url(href: str | None, asin: str | None = None) -> str | None:
     return f"https://www.amazon.com/{href}"
 
 
+def _should_skip_result(title: str, query: str) -> bool:
+    """Filter out accessory/noise results based on query category."""
+    title_lower = title.lower()
+    query_lower = query.lower()
+
+    universal_skip = ["screen protector", "keyboard cover", "sleeve", "bag"]
+    if any(s in title_lower for s in universal_skip):
+        return True
+
+    supplement_query = any(w in query_lower for w in [
+        "supplement", "vitamin", "pill", "capsule", "tablet", "powder",
+        "oil", "fish oil", "protein", "omega", "probiotic", "collagen",
+    ])
+    electronics_noise = ["case", "cover", "stand", "mount", "charger", "cable", "adapter"]
+    if not supplement_query and any(s in title_lower for s in electronics_noise):
+        return True
+
+    if supplement_query:
+        supplement_skip = [
+            "empty bottle", "empty capsule", "pill cutter", "pill organizer",
+            "pill splitter", "pill crusher", "label", "labeling", "sticker",
+            "bottle brush", "storage case", "weekly", "travel case",
+        ]
+        if any(s in title_lower for s in supplement_skip):
+            return True
+
+    return False
+
+
 def _open_product_page(url: str) -> None:
     """Open a product page, scrape it, and keep the browser alive."""
     global _open_product_details
@@ -188,6 +216,9 @@ def _open_product_page(url: str) -> None:
         holder["close"] = True
 
     try:
+        # Snapshot before launch so _find_chromium_hwnd detects the new window.
+        pre_launch = browser_manager.snapshot_chromium_hwnds()
+
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=False, args=[
                 "--window-size=720,900",
@@ -201,8 +232,7 @@ def _open_product_page(url: str) -> None:
             page.goto(url)
             page.wait_for_load_state("domcontentloaded")
 
-            # Browser HWND polling waits for the new Chromium window.
-            hwnd = browser_manager._find_chromium_hwnd(timeout=6.0)
+            hwnd = browser_manager._find_chromium_hwnd(timeout=6.0, seen_before=pre_launch)
             if hwnd:
                 browser_manager.set_browser_hwnd(hwnd)
                 browser_manager.focus_browser()
@@ -211,13 +241,13 @@ def _open_product_page(url: str) -> None:
                 page.wait_for_timeout(2000)
                 details = _scrape_product_details(page)
                 _open_product_details.update(details)
-            except Exception as e:
+            except Exception:
                 print("[shopping] scrape error")
 
             while not holder.get("close"):
                 page.wait_for_timeout(500)
             browser.close()
-    except Exception as e:
+    except Exception:
         print("[shopping] open page error")
 
 
@@ -260,6 +290,9 @@ def _open_amazon_browser(query: str, result_holder: dict) -> None:
         result_holder["close"] = True
 
     try:
+        # Snapshot before launch so _find_chromium_hwnd detects the new window.
+        pre_launch = browser_manager.snapshot_chromium_hwnds()
+
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=False, args=[
                 "--window-size=720,900",
@@ -279,8 +312,7 @@ def _open_amazon_browser(query: str, result_holder: dict) -> None:
             page.press('#twotabsearchtextbox', 'Enter')
             page.wait_for_load_state("domcontentloaded")
 
-            # Browser HWND polling waits for the new Chromium window.
-            hwnd = browser_manager._find_chromium_hwnd(timeout=6.0)
+            hwnd = browser_manager._find_chromium_hwnd(timeout=6.0, seen_before=pre_launch)
             if hwnd:
                 browser_manager.set_browser_hwnd(hwnd)
                 browser_manager.focus_browser()
@@ -295,10 +327,7 @@ def _open_amazon_browser(query: str, result_holder: dict) -> None:
                     title = title_el.inner_text() if title_el else "Unknown"
                     price = price_el.inner_text() if price_el else ""
 
-                    title_lower = title.lower()
-                    if any(skip in title_lower for skip in [
-                        "case", "cover", "screen protector", "keyboard cover", "sleeve", "bag"
-                    ]):
+                    if _should_skip_result(title, query):
                         continue
                     if not price:
                         continue
@@ -324,7 +353,7 @@ def _open_amazon_browser(query: str, result_holder: dict) -> None:
                 page.wait_for_timeout(500)
 
             browser.close()
-    except Exception as e:
+    except Exception:
         print("[shopping] browser error")
         result_holder["done"] = True
         result_holder["results"] = []
@@ -378,7 +407,8 @@ async def run_shopping_agent(query: str, shopping_memory: dict | None = None, me
     )
     thread.start()
 
-    loop = asyncio.get_event_loop()
+    # asyncio.get_running_loop() replaces deprecated asyncio.get_event_loop()
+    loop = asyncio.get_running_loop()
     await loop.run_in_executor(None, lambda: _wait_for_done(result_holder))
 
     results = result_holder.get("results", [])

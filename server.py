@@ -3,29 +3,33 @@ import asyncio
 import sys
 import json
 import os
+import re
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
 from agents.shopping import run_shopping_agent
 from agents.calendar import run_calendar_agent
-from agents.research import run_research_agent, research_memory, _is_followup
+from agents.research import run_research_agent
 from agents.general import run_general_agent
 from agents.router import plan_intent, generate_with_fallback
-from agents.shopping import close_active_browser as close_shopping_browser
-from agents.research import close_active_browser as close_research_browser
-from agents.calendar import close_active_browser as close_calendar_browser
 from dotenv import load_dotenv
 from memory import SessionMemory
 import browser_manager
-import re
-import sys
+
+# Removed: duplicate `import sys` (was on line 19 in original)
+# Removed: `from agents.research import research_memory, _is_followup`
+#   — no longer needed; routing is now fully owned by plan_intent in router.py
+# Removed: close_shopping_browser, close_research_browser, close_calendar_browser
+#   — these were imported but never called; browsers close via browser_manager.close_all()
 
 if "--fresh" in sys.argv:
     for f in ["shopping_memory.json", "conversation_history.json", "opensight_memory.json"]:
         if os.path.exists(f):
             os.remove(f)
     sys.argv.remove("--fresh")
-    
+
 if sys.platform == "win32":
-    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    # WindowsProactorEventLoopPolicy is deprecated in Python 3.14+.
+    # DefaultEventLoopPolicy is correct for Python 3.11+ on Windows.
+    asyncio.set_event_loop_policy(asyncio.DefaultEventLoopPolicy())
 
 load_dotenv()
 
@@ -59,7 +63,7 @@ def _save_shopping_memory(mem: dict) -> None:
     try:
         with open(SHOPPING_MEMORY_FILE, "w") as f:
             json.dump(mem, f)
-    except Exception as e:
+    except Exception:
         print("[opensight] could not save shopping memory")
 
 
@@ -79,7 +83,7 @@ def _save_conversation_history(history: list) -> None:
     try:
         with open(CONVERSATION_HISTORY_FILE, "w") as f:
             json.dump(history, f)
-    except Exception as e:
+    except Exception:
         print("[opensight] could not save conversation history")
 
 
@@ -118,25 +122,18 @@ _ACTIONABLE_SHORT = re.compile(
     re.IGNORECASE,
 )
 
+
 def _is_garbled(text: str) -> bool:
     """Detect likely ASR noise or partial utterances."""
     words = text.split()
-    # under 3 words and not a known short command → almost certainly noise
     if len(words) < 3 and not _ACTIONABLE_SHORT.search(text):
         return True
-    # ends mid-question with very few words
     if text.strip().endswith("?") and len(words) < 5:
         return True
-    # common STT fragment patterns
     fragments = ["can you", "try finding", "in?", "that in"]
     if sum(1 for f in fragments if f in text.lower()) >= 2:
         return True
     return False
-
-
-def _has_active_shopping_context(shopping_mem: dict) -> bool:
-    """Check whether shopping results are still available."""
-    return bool((shopping_mem or {}).get("last_results"))
 
 
 async def send_status(ws: WebSocket, agent: str, state: str, detail: str = "") -> None:
@@ -203,20 +200,17 @@ async def websocket_endpoint(ws: WebSocket):
             _session_memory.add_turn("user", user_text)
 
             try:
-                # ── follow-up priority: shopping beats research ──
-                # If the user has active shopping results, NEVER override to research.
-                # Only fall through to research follow-up if shopping context is absent.
-                shopping_followup_active = _has_active_shopping_context(_shopping_memory)
-
-                if not shopping_followup_active and _is_followup(user_text) and research_memory["last_papers"]:
-                    steps = [{"intent": "RESEARCH", "query": user_text}]
-                else:
-                    steps = await plan_intent(
-                        user_text,
-                        _conversation_history,
-                        memory=_session_memory,
-                        shopping_memory=_shopping_memory,
-                    )
+                # All routing — including research-vs-shopping priority and
+                # cross-agent followup detection — is now owned by plan_intent
+                # in router.py. The old pre-routing block that called _is_followup
+                # directly was removed: it bypassed the router fixes and created
+                # a two-layer routing system that could produce conflicting results.
+                steps = await plan_intent(
+                    user_text,
+                    _conversation_history,
+                    memory=_session_memory,
+                    shopping_memory=_shopping_memory,
+                )
 
                 all_responses = []
                 previous_result = ""

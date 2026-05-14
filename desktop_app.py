@@ -168,17 +168,30 @@ class LiquidGlassDisplay(ThemeMixin, DrawMixin, ContextMixin, AnimationMixin):
         self._start_gradient_loop()
         self._start_mic_level_loop()
 
-        # register our HWND with browser_manager after the window is ready
+        # Register our HWND with browser_manager after the window is fully rendered.
+        # Delayed 500ms to ensure the window title "OpenSight" is set before lookup.
         self.root.after(500, self._register_hwnd)
 
     def _register_hwnd(self):
-        """Tell browser_manager our window handle so it can focus us."""
-        if os.name == "nt":
-            try:
-                hwnd = self.root.winfo_id()
+        """Tell browser_manager our real Win32 HWND so it can focus us on wake word.
+
+        winfo_id() on Windows returns Tkinter's internal widget handle, NOT the
+        Win32 HWND that SetForegroundWindow expects — focus silently failed with
+        that value. FindWindowW looks up the window by its title string instead,
+        which reliably returns the correct Win32 HWND.
+        """
+        if os.name != "nt":
+            return
+        try:
+            import ctypes
+            # Find the Win32 HWND by the window title set above ("OpenSight").
+            hwnd = ctypes.windll.user32.FindWindowW(None, "OpenSight")
+            if hwnd:
                 browser_manager.set_opensight_hwnd(hwnd)
-            except Exception as e:
-                print(f"[focus] could not register HWND: {e}")
+            else:
+                print("[focus] FindWindowW returned 0 — focus may not work")
+        except Exception as e:
+            print(f"[focus] could not register HWND: {e}")
 
     def _focus_self(self):
         """Bring OpenSight to the foreground."""
@@ -372,7 +385,7 @@ class LiquidGlassDisplay(ThemeMixin, DrawMixin, ContextMixin, AnimationMixin):
         s.listening = not s.listening
         s.session_token += 1
         if s.listening:
-            self._focus_self()  # bring OpenSight forward when starting to listen
+            self._focus_self()
             s.stop_event.clear()
             s.is_speaking = False
             s.suppress_until = 0.0

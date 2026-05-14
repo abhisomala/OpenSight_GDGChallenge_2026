@@ -27,7 +27,11 @@ def _is_wake_word(transcript: str) -> bool:
     return any(phrase in t for phrase in _WAKE_PHRASES)
 
 
-def _should_fire_wake(on_wake_cb) -> bool:
+def _should_fire_wake() -> bool:
+    """Check the wake word cooldown. Returns True if enough time has passed.
+
+    Previously accepted an unused on_wake_cb parameter — removed.
+    """
     global _last_wake_time
     now = time.monotonic()
     if now - _last_wake_time < _WAKE_COOLDOWN:
@@ -41,7 +45,7 @@ def init_microphone(state):
         default_input_device = sd.default.device[0]
         info = sd.query_devices(default_input_device, "input")
         state.sample_rate = int(info["default_samplerate"])
-    except Exception as e:
+    except Exception:
         print("[mic] Default input device error, falling back to library default")
 
 
@@ -62,7 +66,7 @@ async def _wake_word_loop(state, on_wake_cb):
     while not state.shutdown_event.is_set():
         try:
             await _wake_word_listen(state, on_wake_cb, websockets)
-        except Exception as e:
+        except Exception:
             print("[wake] error")
         if state.shutdown_event.is_set():
             break
@@ -128,8 +132,8 @@ async def _wake_word_listen(state, on_wake_cb, websockets):
                                     .get("transcript", "")
                             )
                             if transcript.strip() and _is_wake_word(transcript):
-                                if _should_fire_wake(on_wake_cb):
-                                    # focus OpenSight before calling the callback
+                                # _should_fire_wake() — on_wake_cb param removed (was unused)
+                                if _should_fire_wake():
                                     try:
                                         import browser_manager
                                         browser_manager.focus_opensight()
@@ -138,7 +142,7 @@ async def _wake_word_listen(state, on_wake_cb, websockets):
                                     on_wake_cb()
                     except asyncio.TimeoutError:
                         continue
-                    except Exception as e:
+                    except Exception:
                         print("[wake] recv error")
                         break
             finally:
@@ -151,7 +155,7 @@ async def _wake_word_listen(state, on_wake_cb, websockets):
                 stream.stop()
                 stream.close()
 
-    except Exception as e:
+    except Exception:
         print("[wake] connection error")
 
 
@@ -170,7 +174,7 @@ async def _deepgram_retry(state, session_token, redraw_cb, on_final_cb, on_inter
     while not state.stop_event.is_set() and session_token == state.session_token:
         try:
             await _deepgram_listen(state, session_token, on_final_cb, on_interim_cb, websockets)
-        except Exception as e:
+        except Exception:
             print("[deepgram] error")
         if state.stop_event.is_set() or session_token != state.session_token:
             break
@@ -256,7 +260,7 @@ async def _deepgram_listen(state, session_token, on_final_cb, on_interim_cb, web
                                     on_interim_cb(f"... {transcript}")
                     except asyncio.TimeoutError:
                         continue
-                    except Exception as e:
+                    except Exception:
                         print("[deepgram] recv error")
                         break
             finally:
@@ -269,7 +273,7 @@ async def _deepgram_listen(state, session_token, on_final_cb, on_interim_cb, web
                 stream.stop()
                 stream.close()
 
-    except Exception as e:
+    except Exception:
         print("[deepgram] connection error")
 
 
@@ -281,11 +285,14 @@ def voice_worker(state):
         try:
             state.is_speaking = True
             speak_text(state, phrase)
-        except Exception as e:
+        except Exception:
             print("[tts] error")
         finally:
             state.is_speaking = False
-            state.suppress_until = time.monotonic() + 0.5
+            # Increased from 0.5s to 1.2s — ElevenLabs streams audio and the
+            # previous 0.5s window sometimes opened the mic while the speaker
+            # was still active, causing Deepgram to transcribe the TTS output.
+            state.suppress_until = time.monotonic() + 1.2
 
 
 def speak_text(state, text: str):
@@ -307,7 +314,7 @@ def speak_text(state, text: str):
             )
             el_stream(audio)
             return
-        except Exception as e:
+        except Exception:
             print("[tts] ElevenLabs error, falling back")
 
     system_name = platform.system()

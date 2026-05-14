@@ -1,4 +1,4 @@
-"""Search Google Scholar and summarize research for follow-up use"""
+"""Search Google Scholar and summarize research for follow-up use."""
 import os
 import re
 import threading
@@ -20,6 +20,16 @@ _NEW_SEARCH_TRIGGERS = re.compile(
     r"^(research|find research|search for|look up|find papers|find studies|find me research|"
     r"find me papers|show me research|show me papers|get me research|"
     r"search papers|search studies|look for papers|look for research)\b",
+    re.IGNORECASE,
+)
+
+_FOLLOWUP_KEYWORDS = re.compile(
+    r"\b(author|authors|who wrote|who made|methodology|method|findings|finding|"
+    r"published|journal|when was|cite|abstract|summary|conclusion|"
+    r"tell me more|more about|what did they|how did they|their approach|"
+    r"first paper|second paper|that paper|the paper|that study|the study|"
+    r"that research|the research|open|pull up|launch|show me|"
+    r"second one|first one|that one|the first|the second)\b",
     re.IGNORECASE,
 )
 
@@ -93,28 +103,24 @@ def _is_new_search(query: str) -> bool:
 
 
 def _is_followup(query: str) -> bool:
-    """Detect follow-up questions about earlier research results."""
+    """Detect follow-up questions about earlier research results.
+
+    Uses explicit keyword matching instead of the old blind word-count heuristic
+    (len < 6 words) which caused unrelated short queries to be treated as followups.
+    """
     if not research_memory["last_papers"] or not research_memory["last_query"]:
         return False
     if _is_new_search(query):
         return False
-    if len(query.split()) < 6:
-        return True
-    return any(phrase in query.lower() for phrase in [
-        "author", "who wrote", "tell me more", "more about",
-        "first paper", "second paper", "that paper", "the paper",
-        "methodology", "findings", "published", "when was",
-        "cite", "abstract", "that study", "the research",
-        "what method", "how did they", "what did they", "did they use",
-        "their approach", "their method", "how does it", "what is it",
-        "open", "open up", "open the", "show me", "pull up",
-        "second one", "first one", "that one",
-    ])
+    return bool(_FOLLOWUP_KEYWORDS.search(query))
 
 
 def _launch_scholar_browser(url: str, holder: dict) -> None:
     """Open Google Scholar in a browser and keep it alive."""
     try:
+        # Snapshot before launch so _find_chromium_hwnd detects the new window.
+        pre_launch = browser_manager.snapshot_chromium_hwnds()
+
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=False, args=[
                 "--window-size=720,900",
@@ -126,11 +132,10 @@ def _launch_scholar_browser(url: str, holder: dict) -> None:
             page = context.new_page()
             try:
                 page.goto(url, wait_until="domcontentloaded", timeout=15000)
-            except Exception as nav_err:
+            except Exception:
                 pass
 
-            # Browser HWND polling waits for the new Chromium window.
-            hwnd = browser_manager._find_chromium_hwnd(timeout=6.0)
+            hwnd = browser_manager._find_chromium_hwnd(timeout=6.0, seen_before=pre_launch)
             if hwnd:
                 browser_manager.set_browser_hwnd(hwnd)
                 browser_manager.focus_browser()
@@ -138,7 +143,7 @@ def _launch_scholar_browser(url: str, holder: dict) -> None:
             while not holder.get("close"):
                 page.wait_for_timeout(500)
             browser.close()
-    except Exception as e:
+    except Exception:
         print("[research] scholar browser error")
     finally:
         holder["done"] = True
@@ -153,6 +158,9 @@ def _launch_paper_window(link: str) -> None:
         holder["close"] = True
 
     try:
+        # Snapshot before launch so _find_chromium_hwnd detects the new window.
+        pre_launch = browser_manager.snapshot_chromium_hwnds()
+
         with sync_playwright() as p:
             browser = p.chromium.launch(headless=False, args=[
                 "--window-size=720,900",
@@ -169,11 +177,10 @@ def _launch_paper_window(link: str) -> None:
             research_memory["scholar_browser_close"] = _close
             try:
                 page.goto(link, wait_until="domcontentloaded", timeout=15000)
-            except Exception as nav_err:
+            except Exception:
                 pass
 
-            # Browser HWND polling waits for the new Chromium window.
-            hwnd = browser_manager._find_chromium_hwnd(timeout=6.0)
+            hwnd = browser_manager._find_chromium_hwnd(timeout=6.0, seen_before=pre_launch)
             if hwnd:
                 browser_manager.set_browser_hwnd(hwnd)
                 browser_manager.focus_browser()
@@ -181,7 +188,7 @@ def _launch_paper_window(link: str) -> None:
             while not holder.get("close"):
                 page.wait_for_timeout(500)
             browser.close()
-    except Exception as e:
+    except Exception:
         print("[research] paper window error")
 
 
@@ -213,15 +220,20 @@ def _open_scholar_results(query: str) -> None:
     print("[research] opened Scholar tab")
 
 
-async def run_research_agent(query: str, history: list = [], status_cb=None, memory=None) -> str:
+async def run_research_agent(
+    query: str,
+    history: list | None = None,
+    status_cb=None,
+    memory=None,
+) -> str:
     """Search Scholar or answer follow-ups from cached research."""
-    global research_memory
+    history = history or []
 
     async def _status(msg: str):
         if status_cb:
             try:
                 await status_cb(msg)
-            except Exception as e:
+            except Exception:
                 print("[research] status error")
 
     if _is_followup(query) and research_memory["last_papers"]:
@@ -232,13 +244,20 @@ async def run_research_agent(query: str, history: list = [], status_cb=None, mem
             open_index = 1
         elif any(w in q for w in ["third", "3rd"]):
             open_index = 2
-        elif any(w in q for w in ["first", "1st"]):
+        elif any(w in q for w in ["first", "1st", "the first"]):
             open_index = 0
         elif any(w in q for w in ["that one", "this one", "the one"]):
             open_index = 0
 
-        if wants_open and open_index is not None:
-            return _open_paper(open_index)
+        if wants_open:
+            if open_index is not None:
+                return _open_paper(open_index)
+            else:
+                # User said "open it" without specifying — ask rather than silently fail.
+                n = len(research_memory["last_papers"])
+                if n == 1:
+                    return _open_paper(0)
+                return "Which one — the first or the second?"
 
         print("[research] follow-up detected")
         await _status(f"Answering from memory · {len(research_memory['last_papers'])} papers cached")
@@ -319,9 +338,10 @@ User: "{query}"
 
         stopwords = {"what", "find", "show", "tell", "about", "papers", "research",
                      "study", "some", "give", "recent", "latest", "best", "good"}
+        memory.entities.setdefault("topics", [])
+        existing = set(memory.entities["topics"])
         new_topics = [w.lower() for w in clean_query.split()
                       if len(w) > 3 and w.lower() not in stopwords]
-        existing = set(memory.entities.get("topics", []))
         for t in new_topics:
             if t not in existing:
                 memory.entities["topics"].append(t)
