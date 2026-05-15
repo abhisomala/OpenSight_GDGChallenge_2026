@@ -30,7 +30,10 @@ class AppState:
         self.last_user_text = ""
         self.last_ai_text = ""
 
-        self.agent_ws_url = "ws://127.0.0.1:8080/ws"
+        self.agent_ws_url = os.getenv(
+            "OPENSIGHT_WS_URL",
+            "ws://127.0.0.1:8080/ws"
+        )
         self.agent_enabled = True
         self.agent_focus = "IDLE"
         self.agent_phase = "idle"

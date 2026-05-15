@@ -193,7 +193,7 @@ async def _deepgram_listen(state, session_token, on_final_cb, on_interim_cb, web
     url = (
         "wss://api.deepgram.com/v1/listen"
         "?model=nova-2&language=en-US&smart_format=true"
-        "&interim_results=true&endpointing=1200"
+        "&interim_results=true&endpointing=2500"
         "&encoding=linear16&channels=1"
         f"&sample_rate={state.sample_rate}"
     )
@@ -303,19 +303,18 @@ def speak_text(state, text: str):
 
     if api_key:
         try:
-            from elevenlabs.client import ElevenLabs
-            from elevenlabs import stream as el_stream
+            from elevenlabs import ElevenLabs, stream as el_stream
 
             el_client = ElevenLabs(api_key=api_key)
-            audio = el_client.text_to_speech.convert(
+            audio = el_client.text_to_speech.stream(
                 voice_id="onwK4e9ZLuTAKqWW03F9",
                 text=text,
                 model_id="eleven_turbo_v2",
             )
             el_stream(audio)
             return
-        except Exception:
-            print("[tts] ElevenLabs error, falling back")
+        except Exception as e:
+            print(f"[tts] ElevenLabs error: {e}, falling back")
 
     system_name = platform.system()
     if system_name == "Darwin":

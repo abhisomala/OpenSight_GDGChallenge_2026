@@ -10,7 +10,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 RUN rm -f .env token.json credentials.json \
-    shopping_memory.json conversation_history.json opensight_memory.json
+    shopping_memory.json conversation_history.json \
+    opensight_memory.json
 
 EXPOSE 8080
 
