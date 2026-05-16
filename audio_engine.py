@@ -292,7 +292,7 @@ def voice_worker(state):
             # Increased from 0.5s to 1.2s — ElevenLabs streams audio and the
             # previous 0.5s window sometimes opened the mic while the speaker
             # was still active, causing Deepgram to transcribe the TTS output.
-            state.suppress_until = time.monotonic() + 1.2
+            state.suppress_until = time.monotonic() + 0.3
 
 
 def speak_text(state, text: str):

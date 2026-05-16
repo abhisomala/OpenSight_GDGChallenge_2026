@@ -95,7 +95,7 @@ async def _query_agent_response_async(state, user_text: str, session_token: int,
                     query = payload.get("query")
                     url = payload.get("url")
 
-                    if agent_name == "SHOPPING":
+                    if agent_name in ("SHOPPING", "SHOPPING_OPEN"):
                         # Synchronous: server is waiting for our browser_result
                         result_data = await _run_browser_action(agent_name, query, url)
                         await ws.send(json.dumps({
