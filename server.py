@@ -5,9 +5,25 @@ import json
 import os
 import re
 from fastapi import FastAPI, WebSocket, WebSocketDisconnect
-from agents.shopping import run_shopping_agent
+from agents.shopping import (
+    run_shopping_agent,
+    synthesize_shopping_response,
+    set_open_product_details,
+    _is_followup_query,
+    _is_open_intent,
+    _extract_option_index,
+    get_followup_product_url,
+    get_followup_product_title,
+)
 from agents.calendar import run_calendar_agent
-from agents.research import run_research_agent
+from agents.research import (
+    run_research_agent,
+    search_scholar,
+    synthesize_research_response,
+    _is_followup as _is_research_followup,
+    get_open_intent as _get_research_open_intent,
+    research_memory,
+)
 from agents.general import run_general_agent
 from agents.router import plan_intent, generate_with_fallback
 from dotenv import load_dotenv
@@ -48,7 +64,6 @@ CONVERSATION_HISTORY_FILE = "conversation_history.json"
 
 
 def _load_shopping_memory() -> dict:
-    """Load saved shopping memory from disk."""
     try:
         if os.path.exists(SHOPPING_MEMORY_FILE):
             with open(SHOPPING_MEMORY_FILE, "r") as f:
@@ -59,7 +74,6 @@ def _load_shopping_memory() -> dict:
 
 
 def _save_shopping_memory(mem: dict) -> None:
-    """Persist shopping memory to disk."""
     try:
         with open(SHOPPING_MEMORY_FILE, "w") as f:
             json.dump(mem, f)
@@ -68,7 +82,6 @@ def _save_shopping_memory(mem: dict) -> None:
 
 
 def _load_conversation_history() -> list:
-    """Load recent conversation history from disk."""
     try:
         if os.path.exists(CONVERSATION_HISTORY_FILE):
             with open(CONVERSATION_HISTORY_FILE, "r") as f:
@@ -79,7 +92,6 @@ def _load_conversation_history() -> list:
 
 
 def _save_conversation_history(history: list) -> None:
-    """Persist recent conversation history to disk."""
     try:
         with open(CONVERSATION_HISTORY_FILE, "w") as f:
             json.dump(history, f)
@@ -95,12 +107,10 @@ _session_memory: SessionMemory = SessionMemory.load()
 
 
 def close_all_browsers():
-    """Close all tracked browser windows."""
     browser_manager.close_all()
 
 
 def _is_short_actionable_text(text: str, shopping_mem: dict) -> bool:
-    """Detect short actionable shopping replies."""
     t = (text or "").strip().lower()
     if not t:
         return False
@@ -124,7 +134,6 @@ _ACTIONABLE_SHORT = re.compile(
 
 
 def _is_garbled(text: str) -> bool:
-    """Detect likely ASR noise or partial utterances."""
     words = text.split()
     if len(words) < 3 and not _ACTIONABLE_SHORT.search(text):
         return True
@@ -137,7 +146,6 @@ def _is_garbled(text: str) -> bool:
 
 
 async def send_status(ws: WebSocket, agent: str, state: str, detail: str = "") -> None:
-    """Send a status event to the desktop client."""
     await ws.send_text(json.dumps({
         "type": "status",
         "agent": agent,
@@ -146,27 +154,26 @@ async def send_status(ws: WebSocket, agent: str, state: str, detail: str = "") -
     }))
 
 
-async def run_agent(
-    intent: str,
-    query: str,
-    history: list,
-    shopping_mem: dict,
-    last_intent: str = "",
-    status_cb=None,
-    memory=None,
-) -> tuple[str, dict | None]:
-    """Run one agent step and return the response plus memory update."""
-    if intent == "SHOPPING":
-        result = await run_shopping_agent(query, shopping_mem, memory=memory)
-        if isinstance(result, tuple):
-            return result
-        return result, None
-    elif intent == "CALENDAR":
-        return await run_calendar_agent(query, memory=memory), None
-    elif intent == "RESEARCH":
-        return await run_research_agent(query, history, status_cb=status_cb, memory=memory), None
-    else:
-        return await run_general_agent(query, history, memory=memory), None
+async def _wait_for_browser_result(ws: WebSocket, agent_name: str, timeout: float = 120.0) -> dict:
+    """Wait for a browser_result message with the matching agent name.
+
+    Only used for SHOPPING new searches where the server needs the results data
+    before it can synthesize the response. All other browser actions are fire-and-forget.
+    """
+    deadline = asyncio.get_event_loop().time() + timeout
+    while asyncio.get_event_loop().time() < deadline:
+        try:
+            raw = await asyncio.wait_for(ws.receive_text(), timeout=5.0)
+            msg = json.loads(raw)
+            if msg.get("type") == "browser_result" and msg.get("agent") == agent_name:
+                return msg.get("data", {})
+        except asyncio.TimeoutError:
+            continue
+        except WebSocketDisconnect:
+            break
+        except Exception:
+            break
+    return {}
 
 
 @app.websocket("/ws")
@@ -200,11 +207,6 @@ async def websocket_endpoint(ws: WebSocket):
             _session_memory.add_turn("user", user_text)
 
             try:
-                # All routing — including research-vs-shopping priority and
-                # cross-agent followup detection — is now owned by plan_intent
-                # in router.py. The old pre-routing block that called _is_followup
-                # directly was removed: it bypassed the router fixes and created
-                # a two-layer routing system that could produce conflicting results.
                 steps = await plan_intent(
                     user_text,
                     _conversation_history,
@@ -215,7 +217,7 @@ async def websocket_endpoint(ws: WebSocket):
                 all_responses = []
                 previous_result = ""
 
-                for i, step in enumerate(steps):
+                for step in steps:
                     intent = step.get("intent", "GENERAL")
                     query = step.get("query", user_text)
 
@@ -236,12 +238,107 @@ async def websocket_endpoint(ws: WebSocket):
                         except Exception:
                             pass
 
-                    result, memory_update = await run_agent(
-                        intent, query, _conversation_history, _shopping_memory,
-                        _last_intent,
-                        status_cb=_research_status if intent == "RESEARCH" else None,
-                        memory=_session_memory,
-                    )
+                    # ── SHOPPING ───────────────────────────────────────────────
+                    if intent == "SHOPPING":
+                        if _is_followup_query(query) and _shopping_memory.get("last_results"):
+                            if _is_open_intent(query):
+                                # Open a specific product — send browser_action, fire-and-forget
+                                product_url = get_followup_product_url(query, _shopping_memory)
+                                product_title = get_followup_product_title(query, _shopping_memory)
+                                if product_url:
+                                    await ws.send_text(json.dumps({
+                                        "type": "browser_action",
+                                        "agent": "SHOPPING_OPEN",
+                                        "url": product_url,
+                                    }))
+                                    set_open_product_details({"title": "", "ingredients": "", "bullets": [], "url": ""})
+                                    result = f"Opening the {product_title} now."
+                                else:
+                                    result = "Which one — the first, second, or third?"
+                                memory_update = None
+                            else:
+                                # Text-only followup (repeat, tell me more, ordinal without open)
+                                result, memory_update = await run_shopping_agent(
+                                    query, _shopping_memory, memory=_session_memory
+                                )
+                        else:
+                            # New Amazon search — must wait for browser_result to get results
+                            await ws.send_text(json.dumps({
+                                "type": "browser_action",
+                                "agent": "SHOPPING",
+                                "query": query,
+                            }))
+                            browser_data = await _wait_for_browser_result(ws, "SHOPPING")
+                            result, memory_update = synthesize_shopping_response(
+                                browser_data, query, _shopping_memory, _session_memory
+                            )
+
+                    # ── RESEARCH ──────────────────────────────────────────────
+                    elif intent == "RESEARCH":
+                        if _is_research_followup(query):
+                            wants_open, paper_url = _get_research_open_intent(query)
+                            if wants_open:
+                                papers = research_memory.get("last_papers", [])
+                                if paper_url:
+                                    # Fire-and-forget: open paper on client, respond immediately
+                                    await ws.send_text(json.dumps({
+                                        "type": "browser_action",
+                                        "agent": "RESEARCH_OPEN",
+                                        "url": paper_url,
+                                    }))
+                                    result = "Opening that paper now."
+                                elif not papers:
+                                    result = "I don't have any papers cached."
+                                elif len(papers) == 1:
+                                    url = papers[0].get("link", "")
+                                    if url:
+                                        await ws.send_text(json.dumps({
+                                            "type": "browser_action",
+                                            "agent": "RESEARCH_OPEN",
+                                            "url": url,
+                                        }))
+                                        result = "Opening that paper now."
+                                    else:
+                                        result = "I don't have a link for that paper."
+                                else:
+                                    result = "Which one — the first or the second?"
+                            else:
+                                # Text-based followup (authors, methodology, findings…)
+                                result = await run_research_agent(
+                                    query, _conversation_history,
+                                    status_cb=_research_status,
+                                    memory=_session_memory,
+                                )
+                            memory_update = None
+                        else:
+                            # New Scholar search — SerpAPI stays server-side
+                            papers, scholar_url, clean_query = await search_scholar(
+                                query, status_cb=_research_status
+                            )
+                            result = synthesize_research_response(
+                                papers, clean_query, memory=_session_memory
+                            )
+                            if papers:
+                                # Fire-and-forget: open Scholar on client, respond immediately
+                                await ws.send_text(json.dumps({
+                                    "type": "browser_action",
+                                    "agent": "RESEARCH",
+                                    "url": scholar_url,
+                                }))
+                            memory_update = None
+
+                    # ── CALENDAR ──────────────────────────────────────────────
+                    elif intent == "CALENDAR":
+                        result = await run_calendar_agent(query, memory=_session_memory)
+                        memory_update = None
+
+                    # ── GENERAL ───────────────────────────────────────────────
+                    else:
+                        result = await run_general_agent(
+                            query, _conversation_history, memory=_session_memory
+                        )
+                        memory_update = None
+
                     _last_intent = intent
                     all_responses.append(result)
                     previous_result = result
