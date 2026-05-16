@@ -104,6 +104,10 @@ class LiquidGlassDisplay(ThemeMixin, DrawMixin, ContextMixin, AnimationMixin):
             "thinking_ms": 360, "agent_flash_ms": 72,
         }
 
+        # Clear session memory on startup for fresh context
+        for f in ["opensight_memory.json", "conversation_history.json", "shopping_memory.json"]:
+            if os.path.exists(f):
+                os.remove(f)
         for agent in AGENT_ORDER:
             self.toggle_knob_pos[agent] = 0.0 if agent in self.disabled_agents else 1.0
 

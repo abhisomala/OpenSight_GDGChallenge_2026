@@ -191,6 +191,12 @@ async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     print("[opensight] client connected")
 
+    # Reset session memory on each new connection for fresh context
+    global _session_memory, _conversation_history, _shopping_memory
+    _session_memory = SessionMemory()
+    _conversation_history = []
+    _shopping_memory = {"last_query": "", "last_results": []}
+
     try:
         while True:
             data = await ws.receive_text()
