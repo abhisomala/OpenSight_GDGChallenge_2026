@@ -49,6 +49,13 @@ if sys.platform == "win32":
 
 load_dotenv()
 
+import base64
+
+# Decode Google TTS credentials from env var when running on Cloud Run
+if os.getenv("GOOGLE_TTS_CREDENTIALS_B64"):
+    with open("tts_credentials.json", "wb") as f:
+        f.write(base64.b64decode(os.getenv("GOOGLE_TTS_CREDENTIALS_B64")))
+
 app = FastAPI()
 
 AGENT_LABELS = {
@@ -191,7 +198,7 @@ async def websocket_endpoint(ws: WebSocket):
             user_text = message.get("text", "")
 
             if _is_garbled(user_text) or (
-                len(user_text.split()) < 4
+                len(user_text.split()) < 3
                 and not _is_short_actionable_text(user_text, _shopping_memory)
             ):
                 await ws.send_text(json.dumps({

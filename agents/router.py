@@ -23,9 +23,9 @@ You are a planner for a voice assistant called OpenSight.
 Given a user message, determine if it requires one or multiple steps to complete.
 
 Available agents:
-- SHOPPING: finding, comparing, buying, or searching for products on Amazon. Always preserve price constraints exactly as stated by the user (e.g. "under $800", "less than $500").
+- SHOPPING: finding, comparing, buying, or searching for products on Amazon. Only use SHOPPING when the user wants to buy or find a purchasable product. Never use SHOPPING for academic research queries. Always preserve price constraints exactly as stated by the user (e.g. "under $800", "less than $500").
 - CALENDAR: scheduling, booking, checking or creating Google Calendar events
-- RESEARCH: finding academic papers or studies on a topic. Also use RESEARCH for any follow-up questions about papers that were previously mentioned, such as asking about authors, methodology, findings, or details of a specific paper.
+- RESEARCH: finding academic papers or studies on a topic. ALWAYS use RESEARCH if the word "research", "papers", "studies", or "articles" appears in the query — never route these to SHOPPING. Also use RESEARCH for any follow-up questions about papers that were previously mentioned, such as asking about authors, methodology, findings, or details of a specific paper.
 - GENERAL: greetings, follow-up questions, definitions, opinions, math, weather, jokes, anything that doesn't require browsing Amazon, accessing a calendar, or finding academic papers. When in doubt use GENERAL.
 
 Respond ONLY with a JSON object like this:
@@ -75,7 +75,7 @@ SHOPPING_FOLLOWUP_PATTERN = re.compile(
 SHOPPING_INTENT_PATTERN = re.compile(
     r"\b(find|get|buy|order|search|look for|shop|show me|recommend|suggest|pick)\b.{0,30}"
     r"\b(on amazon|supplement|product|pill|capsule|tablet|powder|oil|cream|gear|device|gadget|book|item)\b"
-    r"|\b(on amazon|under \$|less than \$|for under|find me|get me|buy me|order me)\b",
+    r"|\b(on amazon|under \$|less than \$|for under|buy me|order me)\b",
     re.IGNORECASE,
 )
 

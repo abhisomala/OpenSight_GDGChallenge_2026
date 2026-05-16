@@ -86,9 +86,9 @@ def _extract_option_index(query: str, max_options: int) -> Optional[int]:
         idx = int(number_match.group(1)) - 1
         return idx if 0 <= idx < max_options else None
     ordinal_map = {
-        "first": 0, "1st": 0, "one": 0,
-        "second": 1, "2nd": 1, "two": 1,
-        "third": 2, "3rd": 2, "three": 2,
+        "first": 0, "1st": 0,
+        "second": 1, "2nd": 1,
+        "third": 2, "3rd": 2,
     }
     for word, idx in ordinal_map.items():
         if re.search(rf'\b{re.escape(word)}\b', text):
