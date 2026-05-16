@@ -7,6 +7,11 @@ try:
 except Exception:
     websockets = None
 
+try:
+    import desktop_browser as _desktop_browser
+except Exception:
+    _desktop_browser = None
+
 
 def process_recognized_text(state, text: str, session_token: int, on_response_cb, safe_after_cb, status_cb=None):
     """Handle recognized text and queue the assistant response."""
@@ -52,7 +57,7 @@ def query_agent_response(state, user_text: str, session_token: int, safe_after_c
 
 
 async def _query_agent_response_async(state, user_text: str, session_token: int, safe_after_cb, status_cb=None) -> str:
-    """Stream WebSocket agent messages and return the final response."""
+    """Stream WebSocket agent messages, handle browser_action requests, return final response."""
     safe_after_cb(0, set_agent_status, state, "BRAIN", "thinking", "routing")
     try:
         async with websockets.connect(state.agent_ws_url, open_timeout=5, close_timeout=1) as ws:
@@ -63,7 +68,7 @@ async def _query_agent_response_async(state, user_text: str, session_token: int,
             while True:
                 if session_token != state.session_token:
                     return ""
-                raw = await asyncio.wait_for(ws.recv(), timeout=60)
+                raw = await asyncio.wait_for(ws.recv(), timeout=180)
                 payload = json.loads(raw)
                 msg_type = payload.get("type")
 
@@ -79,14 +84,33 @@ async def _query_agent_response_async(state, user_text: str, session_token: int,
                     ):
                         state.voice_queue.put("Searching Amazon now.")
                         shopping_loading_spoken = True
+
                 elif msg_type == "research_status":
                     msg = str(payload.get("text", "")).strip()
                     if msg and status_cb:
                         safe_after_cb(0, status_cb, msg)
+
+                elif msg_type == "browser_action":
+                    agent_name = str(payload.get("agent", ""))
+                    query = payload.get("query")
+                    url = payload.get("url")
+
+                    if agent_name == "SHOPPING":
+                        # Synchronous: server is waiting for our browser_result
+                        result_data = await _run_browser_action(agent_name, query, url)
+                        await ws.send(json.dumps({
+                            "type": "browser_result",
+                            "agent": agent_name,
+                            "data": result_data,
+                        }))
+                    else:
+                        # Fire-and-forget: server has already sent (or will send) the response
+                        # without waiting for browser_result — open the browser in the background.
+                        asyncio.create_task(_browser_action_background(ws, agent_name, query, url))
+
                 elif msg_type == "response":
                     final_response = str(payload.get("text", "")).strip()
                     break
-
 
             safe_after_cb(0, set_agent_status, state, "IDLE", "idle", "")
             return final_response
@@ -96,11 +120,35 @@ async def _query_agent_response_async(state, user_text: str, session_token: int,
         return ""
 
 
+async def _run_browser_action(agent_name: str, query, url) -> dict:
+    """Run a browser action in a thread and return the result dict."""
+    if _desktop_browser is None:
+        print("[agent] desktop_browser not available")
+        return {}
+    try:
+        return await asyncio.to_thread(_desktop_browser.dispatch, agent_name, query, url)
+    except Exception as e:
+        print(f"[agent] browser action error: {e}")
+        return {}
+
+
+async def _browser_action_background(ws, agent_name: str, query, url) -> None:
+    """Run a browser action and send the result back (best-effort — WebSocket may be closed)."""
+    result_data = await _run_browser_action(agent_name, query, url)
+    try:
+        await ws.send(json.dumps({
+            "type": "browser_result",
+            "agent": agent_name,
+            "data": result_data,
+        }))
+    except Exception:
+        pass  # WebSocket likely already closed after receiving "response"
+
+
 AGENT_ORDER = ["BRAIN", "SHOPPING", "CALENDAR", "RESEARCH", "GENERAL"]
 
 
 def set_agent_status(state, agent: str, s: str, detail: str = "") -> None:
-    """Update the current agent focus and phase."""
     normalized_agent = normalize_agent(agent)
     normalized_state = s.strip().lower() if s else "idle"
     state.agent_focus = normalized_agent
@@ -108,7 +156,6 @@ def set_agent_status(state, agent: str, s: str, detail: str = "") -> None:
 
 
 def normalize_agent(agent: str) -> str:
-    """Normalize agent labels to canonical values."""
     normalized = agent.strip().upper() if agent else "IDLE"
     if normalized in {"ROUTER", "BRAIN", "PLANNER"}:
         return "BRAIN"
@@ -120,7 +167,6 @@ def normalize_agent(agent: str) -> str:
 
 
 def agent_from_detail(detail: str) -> str:
-    """Infer an agent name from status detail text."""
     lowered = detail.lower()
     if "amazon" in lowered or "shopping" in lowered:
         return "SHOPPING"

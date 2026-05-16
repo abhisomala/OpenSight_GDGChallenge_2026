@@ -1,15 +1,12 @@
-"""Search Amazon, open product pages, and cache scraped details."""
+"""Amazon search result synthesis for the OpenSight server.
 
-import asyncio
+Playwright execution has moved to desktop_browser.py (runs on the desktop client).
+This module handles server-side logic only: response synthesis, followup detection,
+budget filtering, and reading/writing scraped product details for general.py.
+"""
+
 import re
-import threading
-import time
 from typing import Optional
-from urllib.parse import quote_plus
-from playwright.sync_api import sync_playwright
-import browser_manager
-
-_active_browser: dict | None = None
 
 _open_product_details: dict = {
     "title": "",
@@ -20,79 +17,22 @@ _open_product_details: dict = {
 
 
 def get_open_product_details() -> dict:
-    """Return the latest scraped product details."""
+    """Return the latest scraped product details (read by general.py)."""
     return _open_product_details
 
 
-def _scrape_product_details(page) -> dict:
-    """Scrape title, ingredients, and bullets from an Amazon page."""
-    details = {"title": "", "ingredients": "", "bullets": [], "url": page.url}
-    try:
-        el = page.query_selector("#productTitle")
-        if el:
-            details["title"] = el.inner_text().strip()
-    except Exception:
-        pass
-
-    ingredient_selectors = [
-        "#ingredient-statement",
-        "#important-information .a-section p",
-        "[data-feature-name='ingredientStatement'] span",
-        "#ingredients-content",
-        ".ingredient-statement",
-        "#tech-specs-content tr:has-text('Ingredients') td",
-    ]
-    for sel in ingredient_selectors:
-        try:
-            el = page.query_selector(sel)
-            if el:
-                text = el.inner_text().strip()
-                if len(text) > 20:
-                    details["ingredients"] = text
-                    break
-        except Exception:
-            continue
-
-    if not details["ingredients"]:
-        try:
-            important = page.query_selector("#important-information")
-            if important:
-                text = important.inner_text().strip()
-                match = re.search(r'ingredients[:\s]+(.+?)(\n\n|$)', text, re.IGNORECASE | re.DOTALL)
-                if match:
-                    details["ingredients"] = match.group(1).strip()[:600]
-        except Exception:
-            pass
-
-    try:
-        bullet_els = page.query_selector_all("#feature-bullets li span.a-list-item")
-        details["bullets"] = [
-            el.inner_text().strip() for el in bullet_els
-            if el.inner_text().strip()
-        ][:8]
-    except Exception:
-        pass
-
-    return details
-
-
-def close_active_browser():
-    """Close the active Amazon browser if one exists."""
-    global _active_browser
-    if _active_browser:
-        _active_browser["close"] = True
-        _active_browser = None
+def set_open_product_details(details: dict) -> None:
+    """Store scraped data received from a SHOPPING_OPEN browser_result."""
+    _open_product_details.update(details)
 
 
 def _clean_query(query: str) -> str:
-    """Strip Amazon-specific and context text from a query."""
     cleaned = re.sub(r'\s*(on amazon|from amazon|at amazon|amazon)\s*', ' ', query, flags=re.IGNORECASE)
     cleaned = re.sub(r'\s*\[context:[^\]]*\]', '', cleaned, flags=re.IGNORECASE)
     return cleaned.strip()
 
 
 def _shorten_title(title: str) -> str:
-    """Shorten an Amazon title for speech output."""
     title = re.split(r',|-|\|', title)[0].strip()
     if len(title) > 30:
         title = title[:30].rsplit(' ', 1)[0]
@@ -100,7 +40,6 @@ def _shorten_title(title: str) -> str:
 
 
 def _extract_budget(query: str):
-    """Extract a price ceiling from the query when present."""
     match = re.search(r'\$(\d+)', query)
     if match:
         return float(match.group(1))
@@ -112,7 +51,6 @@ def _extract_budget(query: str):
 
 
 def _parse_price(text: str):
-    """Parse a price string into a numeric value."""
     match = re.search(r'\$([\d,]+\.?\d*)', text)
     if match:
         return float(match.group(1).replace(',', ''))
@@ -120,7 +58,6 @@ def _parse_price(text: str):
 
 
 def _is_followup_query(query: str) -> bool:
-    """Detect shopping follow-up or selection queries."""
     text = (query or "").lower()
     if any(w in text for w in ["find me", "search for", "look for", "can you find", "get me", "show me"]):
         return False
@@ -137,12 +74,10 @@ def _is_followup_query(query: str) -> bool:
 
 
 def _is_open_intent(query: str) -> bool:
-    """Detect an intent to open or select a product."""
     return bool(re.search(r'\b(click|open|buy|select|choose)\b', query or "", re.IGNORECASE))
 
 
 def _extract_option_index(query: str, max_options: int) -> Optional[int]:
-    """Resolve an option index from spoken selection text."""
     if max_options <= 0:
         return None
     text = (query or "").lower()
@@ -161,8 +96,7 @@ def _extract_option_index(query: str, max_options: int) -> Optional[int]:
     return None
 
 
-def _build_product_url(href: str | None, asin: str | None = None) -> str | None:
-    """Build a canonical Amazon product URL."""
+def _build_product_url(href: Optional[str], asin: Optional[str] = None) -> Optional[str]:
     if asin:
         return f"https://www.amazon.com/dp/{asin}"
     if not href:
@@ -177,196 +111,7 @@ def _build_product_url(href: str | None, asin: str | None = None) -> str | None:
     return f"https://www.amazon.com/{href}"
 
 
-def _should_skip_result(title: str, query: str) -> bool:
-    """Filter out accessory/noise results based on query category."""
-    title_lower = title.lower()
-    query_lower = query.lower()
-
-    universal_skip = ["screen protector", "keyboard cover", "sleeve", "bag"]
-    if any(s in title_lower for s in universal_skip):
-        return True
-
-    supplement_query = any(w in query_lower for w in [
-        "supplement", "vitamin", "pill", "capsule", "tablet", "powder",
-        "oil", "fish oil", "protein", "omega", "probiotic", "collagen",
-    ])
-    electronics_noise = ["case", "cover", "stand", "mount", "charger", "cable", "adapter"]
-    if not supplement_query and any(s in title_lower for s in electronics_noise):
-        return True
-
-    if supplement_query:
-        supplement_skip = [
-            "empty bottle", "empty capsule", "pill cutter", "pill organizer",
-            "pill splitter", "pill crusher", "label", "labeling", "sticker",
-            "bottle brush", "storage case", "weekly", "travel case",
-        ]
-        if any(s in title_lower for s in supplement_skip):
-            return True
-
-    return False
-
-
-def _open_product_page(url: str) -> None:
-    """Open a product page, scrape it, and keep the browser alive."""
-    global _open_product_details
-    browser_manager.close_all()
-    holder: dict = {"close": False}
-
-    def _close():
-        holder["close"] = True
-
-    try:
-        # Snapshot before launch so _find_chromium_hwnd detects the new window.
-        pre_launch = browser_manager.snapshot_chromium_hwnds()
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False, args=[
-                "--window-size=720,900",
-                "--window-position=720,0",
-                "--no-first-run",
-                "--no-default-browser-check",
-            ])
-            context = browser.new_context(viewport={"width": 720, "height": 900})
-            page = context.new_page()
-            browser_manager.register(_close)
-            page.goto(url)
-            page.wait_for_load_state("domcontentloaded")
-
-            hwnd = browser_manager._find_chromium_hwnd(timeout=6.0, seen_before=pre_launch)
-            if hwnd:
-                browser_manager.set_browser_hwnd(hwnd)
-                browser_manager.focus_browser()
-
-            try:
-                page.wait_for_timeout(2000)
-                details = _scrape_product_details(page)
-                _open_product_details.update(details)
-            except Exception:
-                print("[shopping] scrape error")
-
-            while not holder.get("close"):
-                page.wait_for_timeout(500)
-            browser.close()
-    except Exception:
-        print("[shopping] open page error")
-
-
-def _handle_followup_query(query: str, shopping_memory: dict) -> str:
-    """Handle open/select follow-ups from stored search results."""
-    results = shopping_memory.get("last_results") or []
-    if not results:
-        return "I don't have any options saved yet. Want me to search Amazon?"
-
-    idx = _extract_option_index(query, len(results))
-    text = (query or "").lower()
-
-    if "repeat" in text:
-        parts = [f"{i+1}: {_shorten_title(r['title'])} for {r['price']}" for i, r in enumerate(results)]
-        return " ".join(parts)
-
-    if idx is None:
-        return "Which one — the first, second, or third?"
-
-    selected = results[idx]
-
-    if _is_open_intent(query):
-        url = selected.get("url")
-        title = _shorten_title(selected["title"])
-        if not url:
-            url = f"https://www.amazon.com/s?k={quote_plus(selected['title'])}"
-        global _open_product_details
-        _open_product_details = {"title": "", "ingredients": "", "bullets": [], "url": ""}
-        threading.Thread(target=_open_product_page, args=(url,), daemon=True).start()
-        return f"Opening the {title} now."
-
-    return f"That's the {_shorten_title(selected['title'])}, going for {selected['price']}. Want me to open it?"
-
-
-def _open_amazon_browser(query: str, result_holder: dict) -> None:
-    """Open Amazon search results and collect up to three options."""
-    browser_manager.close_all()
-
-    def _close():
-        result_holder["close"] = True
-
-    try:
-        # Snapshot before launch so _find_chromium_hwnd detects the new window.
-        pre_launch = browser_manager.snapshot_chromium_hwnds()
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False, args=[
-                "--window-size=720,900",
-                "--window-position=720,0",
-                "--no-first-run",
-                "--no-default-browser-check",
-            ])
-            context = browser.new_context(viewport={"width": 720, "height": 900})
-            page = context.new_page()
-            browser_manager.register(_close)
-
-            page.goto("https://www.amazon.com")
-            page.wait_for_load_state("domcontentloaded")
-
-            clean = _clean_query(query)
-            page.fill('#twotabsearchtextbox', clean)
-            page.press('#twotabsearchtextbox', 'Enter')
-            page.wait_for_load_state("domcontentloaded")
-
-            hwnd = browser_manager._find_chromium_hwnd(timeout=6.0, seen_before=pre_launch)
-            if hwnd:
-                browser_manager.set_browser_hwnd(hwnd)
-                browser_manager.focus_browser()
-
-            results = []
-            items = page.query_selector_all('[data-component-type="s-search-result"]')
-
-            for item in items[:8]:
-                try:
-                    title_el = item.query_selector('h2 span')
-                    price_el = item.query_selector('.a-price .a-offscreen')
-                    title = title_el.inner_text() if title_el else "Unknown"
-                    price = price_el.inner_text() if price_el else ""
-
-                    if _should_skip_result(title, query):
-                        continue
-                    if not price:
-                        continue
-
-                    asin = item.get_attribute('data-asin')
-                    title_link_el = item.query_selector('h2 a')
-                    href = title_link_el.get_attribute('href') if title_link_el else None
-                    product_url = _build_product_url(href, asin)
-
-                    results.append({
-                        "title": title[:55],
-                        "price": price,
-                        "price_val": _parse_price(price),
-                        "url": product_url,
-                    })
-                except Exception:
-                    continue
-
-            result_holder["results"] = results
-            result_holder["done"] = True
-
-            while not result_holder.get("close"):
-                page.wait_for_timeout(500)
-
-            browser.close()
-    except Exception:
-        print("[shopping] browser error")
-        result_holder["done"] = True
-        result_holder["results"] = []
-
-
-def _wait_for_done(result_holder: dict) -> None:
-    """Block until the Amazon scrape thread finishes."""
-    while not result_holder.get("done"):
-        time.sleep(0.2)
-
-
 def _build_response(results: list) -> str:
-    """Build a spoken summary for Amazon search results."""
     if len(results) == 1:
         r = results[0]
         return f"I found one — {_shorten_title(r['title'])} for {r['price']}."
@@ -387,55 +132,88 @@ def _build_response(results: list) -> str:
         )
 
 
-async def run_shopping_agent(query: str, shopping_memory: dict | None = None, memory=None) -> tuple[str, dict]:
-    """Search Amazon or answer a follow-up and return updated memory."""
-    global _active_browser
-    shopping_memory = shopping_memory or {"last_query": "", "last_results": []}
+def get_followup_product_url(query: str, shopping_memory: dict) -> Optional[str]:
+    """Return the product URL for an open-intent followup, or None if can't determine."""
+    results = shopping_memory.get("last_results") or []
+    if not results:
+        return None
+    idx = _extract_option_index(query, len(results))
+    if idx is None:
+        return None
+    return results[idx].get("url")
 
-    if _is_followup_query(query) and shopping_memory.get("last_results"):
-        response = _handle_followup_query(query, shopping_memory)
-        if memory is not None:
-            memory.set_result("shopping", response)
-            memory.add_turn("assistant", response, agent="shopping")
-        return response, shopping_memory
 
-    result_holder = {"done": False, "results": [], "close": False}
-    thread = threading.Thread(
-        target=_open_amazon_browser,
-        args=(query, result_holder),
-        daemon=True,
-    )
-    thread.start()
+def get_followup_product_title(query: str, shopping_memory: dict) -> str:
+    """Return the short product title for an open-intent followup."""
+    results = shopping_memory.get("last_results") or []
+    if not results:
+        return "that"
+    idx = _extract_option_index(query, len(results))
+    if idx is None:
+        return "that"
+    return _shorten_title(results[idx].get("title", "that"))
 
-    # asyncio.get_running_loop() replaces deprecated asyncio.get_event_loop()
-    loop = asyncio.get_running_loop()
-    await loop.run_in_executor(None, lambda: _wait_for_done(result_holder))
 
-    results = result_holder.get("results", [])
+def _handle_followup_query(query: str, shopping_memory: dict) -> str:
+    """Handle text-only follow-ups (repeat, tell me more, ordinal without open intent).
+
+    Open-intent follow-ups (open/click/buy) are handled in server.py via
+    browser_action SHOPPING_OPEN before this function is ever called.
+    """
+    results = shopping_memory.get("last_results") or []
+    if not results:
+        return "I don't have any options saved yet. Want me to search Amazon?"
+
+    idx = _extract_option_index(query, len(results))
+    text = (query or "").lower()
+
+    if "repeat" in text:
+        parts = [f"{i+1}: {_shorten_title(r['title'])} for {r['price']}" for i, r in enumerate(results)]
+        return " ".join(parts)
+
+    if idx is None:
+        return "Which one — the first, second, or third?"
+
+    selected = results[idx]
+    return f"That's the {_shorten_title(selected['title'])}, going for {selected['price']}. Want me to open it?"
+
+
+def synthesize_shopping_response(
+    browser_data: dict,
+    query: str,
+    shopping_mem: dict,
+    memory=None,
+) -> tuple[str, dict]:
+    """Build a spoken response from Amazon search results received via browser_result.
+
+    browser_data is the 'data' field of the SHOPPING browser_result message.
+    Returns (response_text, memory_update).
+    """
+    results = browser_data.get("results", [])
 
     if not results:
-        result_holder["close"] = True
         response = "I couldn't find anything for that. Try rephrasing?"
         if memory is not None:
             memory.set_result("shopping", response)
             memory.add_turn("assistant", response, agent="shopping")
-        return response, shopping_memory
+        return response, shopping_mem
 
     budget = _extract_budget(query)
     if budget:
-        in_budget = [r for r in results if r["price_val"] and r["price_val"] <= budget]
+        in_budget = [r for r in results if r.get("price_val") and r["price_val"] <= budget]
         if in_budget:
             results = in_budget[:3]
         else:
-            cheapest = min(results, key=lambda r: r["price_val"] or 9999)
-            result_holder["close"] = True
+            cheapest = min(results, key=lambda r: r.get("price_val") or 9999)
             response = (
                 f"Nothing under ${int(budget)}, sorry. "
                 f"Closest I found is the {_shorten_title(cheapest['title'])} at {cheapest['price']}."
             )
             memory_out = {
                 "last_query": _clean_query(query),
-                "last_results": [{"title": cheapest["title"], "price": cheapest["price"], "url": cheapest.get("url")}],
+                "last_results": [
+                    {"title": cheapest["title"], "price": cheapest["price"], "url": cheapest.get("url")}
+                ],
             }
             if memory is not None:
                 memory.set_result("shopping", response)
@@ -443,8 +221,6 @@ async def run_shopping_agent(query: str, shopping_memory: dict | None = None, me
             return response, memory_out
     else:
         results = results[:3]
-
-    _active_browser = result_holder
 
     memory_update = {
         "last_query": _clean_query(query),
@@ -459,3 +235,26 @@ async def run_shopping_agent(query: str, shopping_memory: dict | None = None, me
         memory.set_result("shopping", response)
         memory.add_turn("assistant", response, agent="shopping")
     return response, memory_update
+
+
+async def run_shopping_agent(
+    query: str,
+    shopping_memory: dict | None = None,
+    memory=None,
+) -> tuple[str, dict]:
+    """Handle shopping follow-up queries that do not require a browser.
+
+    Open-intent follow-ups and new searches are handled in server.py via
+    browser_action messages. This function is called only for text-only
+    follow-ups (repeat, tell me more, ordinal selection without open intent).
+    """
+    shopping_memory = shopping_memory or {"last_query": "", "last_results": []}
+
+    if _is_followup_query(query) and shopping_memory.get("last_results"):
+        response = _handle_followup_query(query, shopping_memory)
+        if memory is not None:
+            memory.set_result("shopping", response)
+            memory.add_turn("assistant", response, agent="shopping")
+        return response, shopping_memory
+
+    return "I couldn't process that shopping request.", shopping_memory

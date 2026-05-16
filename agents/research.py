@@ -1,19 +1,22 @@
-"""Search Google Scholar and summarize research for follow-up use."""
+"""Search Google Scholar via SerpAPI and synthesize research responses.
+
+Playwright execution (Scholar browser, paper windows) has moved to desktop_browser.py.
+This module handles server-side logic: SerpAPI calls, response synthesis, and followup
+detection using the in-memory research_memory cache.
+"""
+import asyncio
 import os
 import re
-import threading
+from typing import Optional
 from agents.router import generate_with_fallback
 from serpapi import GoogleSearch
 from dotenv import load_dotenv
-from playwright.sync_api import sync_playwright
-import browser_manager
 
 load_dotenv()
 
-research_memory = {
+research_memory: dict = {
     "last_papers": [],
     "last_query": "",
-    "scholar_browser_close": None,
 }
 
 _NEW_SEARCH_TRIGGERS = re.compile(
@@ -34,19 +37,7 @@ _FOLLOWUP_KEYWORDS = re.compile(
 )
 
 
-def close_active_browser():
-    """Close the active Scholar browser if one exists."""
-    fn = research_memory.get("scholar_browser_close")
-    if fn:
-        try:
-            fn()
-        except Exception:
-            pass
-        research_memory["scholar_browser_close"] = None
-
-
 def _shorten_title(title: str) -> str:
-    """Shorten a paper title for spoken responses."""
     title = title.split(':')[0].strip()
     if len(title) > 50:
         title = title[:50].rsplit(' ', 1)[0]
@@ -87,7 +78,6 @@ def _extract_product_hint(papers: list, query: str) -> str:
 
 
 def _build_response(papers: list) -> str:
-    """Build a short spoken summary for found papers."""
     if not papers:
         return "I couldn't find any papers on that."
     p1 = _shorten_title(papers[0].get('title', 'Unknown'))
@@ -98,16 +88,11 @@ def _build_response(papers: list) -> str:
 
 
 def _is_new_search(query: str) -> bool:
-    """Detect whether a query starts a new research search."""
     return bool(_NEW_SEARCH_TRIGGERS.search(query.strip()))
 
 
 def _is_followup(query: str) -> bool:
-    """Detect follow-up questions about earlier research results.
-
-    Uses explicit keyword matching instead of the old blind word-count heuristic
-    (len < 6 words) which caused unrelated short queries to be treated as followups.
-    """
+    """Detect follow-up questions about earlier research results."""
     if not research_memory["last_papers"] or not research_memory["last_query"]:
         return False
     if _is_new_search(query):
@@ -115,196 +100,64 @@ def _is_followup(query: str) -> bool:
     return bool(_FOLLOWUP_KEYWORDS.search(query))
 
 
-def _launch_scholar_browser(url: str, holder: dict) -> None:
-    """Open Google Scholar in a browser and keep it alive."""
-    try:
-        # Snapshot before launch so _find_chromium_hwnd detects the new window.
-        pre_launch = browser_manager.snapshot_chromium_hwnds()
+def get_open_intent(query: str) -> tuple[bool, Optional[str]]:
+    """Detect whether a followup query wants to open a paper. Returns (wants_open, url_or_None).
 
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False, args=[
-                "--window-size=720,900",
-                "--window-position=720,0",
-                "--no-first-run",
-                "--no-default-browser-check",
-            ])
-            context = browser.new_context(viewport={"width": 720, "height": 900})
-            page = context.new_page()
-            try:
-                page.goto(url, wait_until="domcontentloaded", timeout=15000)
-            except Exception:
-                pass
+    Called by server.py before run_research_agent so open-paper followups can be
+    dispatched as browser_action RESEARCH_OPEN without entering the followup text path.
+    """
+    q = query.lower()
+    wants_open = any(w in q for w in ["open", "pull up", "launch", "show me"])
+    if not wants_open:
+        return False, None
 
-            hwnd = browser_manager._find_chromium_hwnd(timeout=6.0, seen_before=pre_launch)
-            if hwnd:
-                browser_manager.set_browser_hwnd(hwnd)
-                browser_manager.focus_browser()
+    papers = research_memory.get("last_papers", [])
+    if not papers:
+        return True, None  # wants_open but nothing cached
 
-            while not holder.get("close"):
-                page.wait_for_timeout(500)
-            browser.close()
-    except Exception:
-        print("[research] scholar browser error")
-    finally:
-        holder["done"] = True
+    open_index: Optional[int] = None
+    if any(w in q for w in ["second", "2nd"]):
+        open_index = 1
+    elif any(w in q for w in ["third", "3rd"]):
+        open_index = 2
+    elif any(w in q for w in ["first", "1st", "the first"]):
+        open_index = 0
+    elif any(w in q for w in ["that one", "this one", "the one"]):
+        open_index = 0
+    elif len(papers) == 1:
+        open_index = 0
 
+    if open_index is None or open_index >= len(papers):
+        return True, None  # ambiguous — caller should ask "which one?"
 
-def _launch_paper_window(link: str) -> None:
-    """Open a research result page and keep the browser alive."""
-    browser_manager.close_all()
-    holder: dict = {"close": False, "done": False}
-
-    def _close():
-        holder["close"] = True
-
-    try:
-        # Snapshot before launch so _find_chromium_hwnd detects the new window.
-        pre_launch = browser_manager.snapshot_chromium_hwnds()
-
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=False, args=[
-                "--window-size=720,900",
-                "--window-position=720,0",
-                "--no-first-run",
-                "--no-default-browser-check",
-            ])
-            context = browser.new_context(
-                accept_downloads=True,
-                viewport={"width": 720, "height": 900},
-            )
-            page = context.new_page()
-            browser_manager.register(_close)
-            research_memory["scholar_browser_close"] = _close
-            try:
-                page.goto(link, wait_until="domcontentloaded", timeout=15000)
-            except Exception:
-                pass
-
-            hwnd = browser_manager._find_chromium_hwnd(timeout=6.0, seen_before=pre_launch)
-            if hwnd:
-                browser_manager.set_browser_hwnd(hwnd)
-                browser_manager.focus_browser()
-
-            while not holder.get("close"):
-                page.wait_for_timeout(500)
-            browser.close()
-    except Exception:
-        print("[research] paper window error")
+    url = papers[open_index].get("link", "")
+    return True, url if url else None
 
 
-def _open_paper(index: int) -> str:
-    """Open a cached paper by index and return a status message."""
-    papers = research_memory["last_papers"]
-    if index >= len(papers):
-        return "I don't have that paper."
-    link = papers[index].get("link", "")
-    title = _shorten_title(papers[index].get("title", "Paper"))
-    if not link:
-        return "I don't have a link for that paper."
-    threading.Thread(target=_launch_paper_window, args=(link,), daemon=True).start()
-    return f"Opening {title} now."
-
-
-def _open_scholar_results(query: str) -> None:
-    """Open the current Google Scholar results in a browser."""
-    browser_manager.close_all()
-    url = f"https://scholar.google.com/scholar?q={query.replace(' ', '+')}"
-    holder: dict = {"close": False, "done": False}
-
-    def _close():
-        holder["close"] = True
-
-    research_memory["scholar_browser_close"] = _close
-    browser_manager.register(_close)
-    threading.Thread(target=_launch_scholar_browser, args=(url, holder), daemon=True).start()
-    print("[research] opened Scholar tab")
-
-
-async def run_research_agent(
+async def search_scholar(
     query: str,
-    history: list | None = None,
     status_cb=None,
-    memory=None,
-) -> str:
-    """Search Scholar or answer follow-ups from cached research."""
-    history = history or []
+) -> tuple[list, str, str]:
+    """Call SerpAPI to find papers. Returns (papers, scholar_url, clean_query).
 
+    Does NOT open a browser — Playwright execution is handled by the desktop client
+    via browser_action RESEARCH after this function returns.
+    """
     async def _status(msg: str):
         if status_cb:
             try:
                 await status_cb(msg)
             except Exception:
-                print("[research] status error")
-
-    if _is_followup(query) and research_memory["last_papers"]:
-        q = query.lower()
-        wants_open = any(w in q for w in ["open", "pull up", "launch", "show me"])
-        open_index = None
-        if any(w in q for w in ["second", "2nd"]):
-            open_index = 1
-        elif any(w in q for w in ["third", "3rd"]):
-            open_index = 2
-        elif any(w in q for w in ["first", "1st", "the first"]):
-            open_index = 0
-        elif any(w in q for w in ["that one", "this one", "the one"]):
-            open_index = 0
-
-        if wants_open:
-            if open_index is not None:
-                return _open_paper(open_index)
-            else:
-                # User said "open it" without specifying — ask rather than silently fail.
-                n = len(research_memory["last_papers"])
-                if n == 1:
-                    return _open_paper(0)
-                return "Which one — the first or the second?"
-
-        print("[research] follow-up detected")
-        await _status(f"Answering from memory · {len(research_memory['last_papers'])} papers cached")
-
-        context = "\n\n".join([
-            f"Paper {i+1}:\nTitle: {p.get('title')}\n"
-            f"Authors: {p.get('publication_info', {}).get('authors', [{}])[0].get('name', 'Unknown') if p.get('publication_info', {}).get('authors') else 'Not available'}\n"
-            f"Summary: {p.get('snippet', 'No summary')}\n"
-            f"Year: {p.get('publication_info', {}).get('summary', '')}"
-            for i, p in enumerate(research_memory["last_papers"][:5])
-        ])
-
-        history_text = ""
-        if history:
-            history_text = "\n\nRecent conversation:\n"
-            for turn in history:
-                history_text += f"User: {turn['user']}\nAssistant: {turn['assistant']}\n"
-
-        mem_context_block = ""
-        if memory is not None:
-            ctx = memory.context_for_prompt()
-            if ctx and ctx != "No prior context.":
-                mem_context_block = f"\n\nSESSION CONTEXT:\n{ctx}\n"
-
-        prompt = f"""
-You are a voice assistant. Answer conversationally in 1-2 sentences.
-No filler phrases, no bullet points, no markdown.
-Get straight to the answer using only what's relevant below.
-{mem_context_block}
-Papers on "{research_memory['last_query']}":
-{context}
-{history_text}
-User: "{query}"
-"""
-        await _status("Composing response...")
-        result = await generate_with_fallback(prompt)
-        if memory is not None:
-            memory.set_result("research", result)
-            memory.add_turn("assistant", result, agent="research")
-        return result
+                pass
 
     await _status("Building search query...")
 
     clean_query = re.sub(
         r"^(research on|find research on|find papers on|find studies on|search for|look up)\s+",
-        "", query.strip(), flags=re.IGNORECASE
+        "", query.strip(), flags=re.IGNORECASE,
     )
+
+    scholar_url = f"https://scholar.google.com/scholar?q={clean_query.replace(' ', '+')}"
 
     params = {
         "engine": "google_scholar",
@@ -314,19 +167,36 @@ User: "{query}"
     }
 
     await _status("Searching Google Scholar...")
-    search = GoogleSearch(params)
-    results = search.get_dict()
+    loop = asyncio.get_running_loop()
+    results = await loop.run_in_executor(
+        None,
+        lambda: GoogleSearch(params).get_dict(),
+    )
     papers = results.get("organic_results", [])
 
+    if papers:
+        await _status(f"Found {len(papers)} papers · ranking by relevance...")
+
+    return papers, scholar_url, clean_query
+
+
+def synthesize_research_response(
+    papers: list,
+    clean_query: str,
+    memory=None,
+) -> str:
+    """Build spoken response from papers, populate research_memory, update session memory.
+
+    Called by server.py after search_scholar returns. Papers come from SerpAPI
+    (server-side); browser opening is handled separately via browser_action RESEARCH.
+    """
     if not papers:
         return f"I couldn't find anything on {clean_query}. Try a different search term."
 
-    await _status(f"Found {len(papers)} papers · ranking by relevance...")
-
     research_memory["last_papers"] = papers
     research_memory["last_query"] = clean_query
+
     resp = _build_response(papers)
-    _open_scholar_results(clean_query)
 
     if memory is not None:
         memory.set_result("research", resp)
@@ -348,3 +218,64 @@ User: "{query}"
                 existing.add(t)
 
     return resp
+
+
+async def run_research_agent(
+    query: str,
+    history: list | None = None,
+    status_cb=None,
+    memory=None,
+) -> str:
+    """Handle text-based followup questions about cached research papers.
+
+    New searches go through search_scholar + synthesize_research_response in server.py.
+    Open-paper followups go through browser_action RESEARCH_OPEN in server.py.
+    This function is called only for text-based followups (authors, findings, etc.).
+    """
+    history = history or []
+
+    async def _status(msg: str):
+        if status_cb:
+            try:
+                await status_cb(msg)
+            except Exception:
+                print("[research] status error")
+
+    await _status(f"Answering from memory · {len(research_memory['last_papers'])} papers cached")
+
+    context = "\n\n".join([
+        f"Paper {i+1}:\nTitle: {p.get('title')}\n"
+        f"Authors: {p.get('publication_info', {}).get('authors', [{}])[0].get('name', 'Unknown') if p.get('publication_info', {}).get('authors') else 'Not available'}\n"
+        f"Summary: {p.get('snippet', 'No summary')}\n"
+        f"Year: {p.get('publication_info', {}).get('summary', '')}"
+        for i, p in enumerate(research_memory["last_papers"][:5])
+    ])
+
+    history_text = ""
+    if history:
+        history_text = "\n\nRecent conversation:\n"
+        for turn in history:
+            history_text += f"User: {turn['user']}\nAssistant: {turn['assistant']}\n"
+
+    mem_context_block = ""
+    if memory is not None:
+        ctx = memory.context_for_prompt()
+        if ctx and ctx != "No prior context.":
+            mem_context_block = f"\n\nSESSION CONTEXT:\n{ctx}\n"
+
+    prompt = f"""
+You are a voice assistant. Answer conversationally in 1-2 sentences.
+No filler phrases, no bullet points, no markdown.
+Get straight to the answer using only what's relevant below.
+{mem_context_block}
+Papers on "{research_memory['last_query']}":
+{context}
+{history_text}
+User: "{query}"
+"""
+    await _status("Composing response...")
+    result = await generate_with_fallback(prompt)
+    if memory is not None:
+        memory.set_result("research", result)
+        memory.add_turn("assistant", result, agent="research")
+    return result
