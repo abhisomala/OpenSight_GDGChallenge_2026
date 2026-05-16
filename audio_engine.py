@@ -298,23 +298,49 @@ def voice_worker(state):
 def speak_text(state, text: str):
     import platform
     import subprocess
+    import tempfile
+    import os
 
-    api_key = os.getenv("ELEVENLABS_API_KEY")
+    tts_creds = os.getenv("GOOGLE_TTS_CREDENTIALS")
 
-    if api_key:
+    if tts_creds and os.path.exists(tts_creds):
         try:
-            from elevenlabs import ElevenLabs, stream as el_stream
+            from google.cloud import texttospeech
+            import pygame
 
-            el_client = ElevenLabs(api_key=api_key)
-            audio = el_client.text_to_speech.stream(
-                voice_id="onwK4e9ZLuTAKqWW03F9",
-                text=text,
-                model_id="eleven_turbo_v2",
+            os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tts_creds
+            client = texttospeech.TextToSpeechClient()
+
+            synthesis_input = texttospeech.SynthesisInput(text=text)
+            voice = texttospeech.VoiceSelectionParams(
+                language_code="en-US",
+                name=os.getenv("GOOGLE_TTS_VOICE", "en-US-Journey-F"),
             )
-            el_stream(audio)
+            audio_config = texttospeech.AudioConfig(
+                audio_encoding=texttospeech.AudioEncoding.MP3
+            )
+
+            response = client.synthesize_speech(
+                input=synthesis_input,
+                voice=voice,
+                audio_config=audio_config,
+            )
+
+            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+                f.write(response.audio_content)
+                tmp_path = f.name
+
+            pygame.mixer.init()
+            pygame.mixer.music.load(tmp_path)
+            pygame.mixer.music.play()
+            while pygame.mixer.music.get_busy():
+                pygame.time.wait(100)
+            pygame.mixer.quit()
+            os.unlink(tmp_path)
             return
+
         except Exception as e:
-            print(f"[tts] ElevenLabs error: {e}, falling back")
+            print(f"[tts] Google TTS error: {e}, falling back")
 
     system_name = platform.system()
     if system_name == "Darwin":
