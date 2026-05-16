@@ -144,7 +144,7 @@ def _is_garbled(text: str) -> bool:
     words = text.split()
     if len(words) < 3 and not _ACTIONABLE_SHORT.search(text):
         return True
-    if text.strip().endswith("?") and len(words) < 5:
+    if text.strip().endswith("?") and len(words) < 2:
         return True
     fragments = ["can you", "try finding", "in?", "that in"]
     if sum(1 for f in fragments if f in text.lower()) >= 2:
@@ -191,11 +191,6 @@ async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     print("[opensight] client connected")
 
-    # Reset session memory on each new connection for fresh context
-    global _session_memory, _conversation_history, _shopping_memory
-    _session_memory = SessionMemory()
-    _conversation_history = []
-    _shopping_memory = {"last_query": "", "last_results": []}
 
     try:
         while True:
@@ -264,7 +259,10 @@ async def websocket_endpoint(ws: WebSocket):
                                         "agent": "SHOPPING_OPEN",
                                         "url": product_url,
                                     }))
-                                    set_open_product_details({"title": "", "ingredients": "", "bullets": [], "url": ""})
+                                    # Wait for scraped data from desktop client
+                                    scraped = await _wait_for_browser_result(ws, "SHOPPING_OPEN", timeout=30.0)
+                                    if scraped:
+                                        set_open_product_details(scraped.get("scraped", {}))
                                     result = f"Opening the {product_title} now."
                                 else:
                                     result = "Which one — the first, second, or third?"
