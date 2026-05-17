@@ -26,7 +26,8 @@
       "Bash(pip show *)",
       "Bash(findstr /i \"name version not\")",
       "Bash(del \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\\\\run_target_tests.py\")",
-      "Bash(.venv\\\\Scripts\\\\pyinstaller.exe OpenSight.spec)"
+      "Bash(.venv\\\\Scripts\\\\pyinstaller.exe OpenSight.spec)",
+      "Bash(.venv\\\\Scripts\\\\python.exe -c \"import websockets; print\\('websockets ok', websockets.__version__\\)\")"
     ]
   }
 }
