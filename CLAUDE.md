@@ -24,7 +24,7 @@ OpenSight is a voice-first, multi-agent AI accessibility system built for visual
 | LLM | Gemini 2.5 Flash (routing + synthesis), Gemini 2.5 Pro (fallback) |
 | Agent orchestration | Python, custom multi-agent loop |
 | Browser automation | Playwright (Chromium) — runs locally only, not on Cloud Run |
-| Voice output | ElevenLabs TTS (streams via mpv) |
+| Voice output | Google Cloud TTS (streams via mpv) |
 | Backend | FastAPI + WebSockets |
 | Desktop UI | Tkinter (custom LiquidGlass renderer) |
 | Memory | JSON persistence + in-memory SessionMemory |

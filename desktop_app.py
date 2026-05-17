@@ -1,5 +1,6 @@
 import math
 import os
+import sys
 import threading
 import time
 import tkinter as tk
@@ -19,7 +20,23 @@ from ui.ui_animations import AnimationMixin
 
 import browser_manager
 
-load_dotenv()
+# Fix Playwright browser path when running as PyInstaller exe
+if hasattr(sys, 'frozen'):
+    os.environ['PLAYWRIGHT_BROWSERS_PATH'] = os.path.join(
+        os.environ.get('LOCALAPPDATA', ''),
+        'ms-playwright'
+    )
+
+
+def _resource_path(relative_path: str) -> str:
+    """Get absolute path to a bundled resource — works in dev and PyInstaller."""
+    if hasattr(sys, '_MEIPASS'):
+        return os.path.join(sys._MEIPASS, relative_path)
+    return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
+
+
+# Load .env from bundled location when running as exe
+load_dotenv(_resource_path(".env"))
 
 try:
     websockets = __import__("websockets")
@@ -125,9 +142,8 @@ class LiquidGlassDisplay(ThemeMixin, DrawMixin, ContextMixin, AnimationMixin):
                 print(f"[icon] could not set AppUserModelID: {e}")
         try:
             from PIL import Image, ImageTk
-            base_dir = os.path.dirname(os.path.abspath(__file__))
-            icon_png_path = os.path.join(base_dir, "assets", "icons", "opensight_icon.png")
-            ico_path = os.path.join(base_dir, "assets", "icons", "opensight_icon.ico")
+            icon_png_path = _resource_path(os.path.join("assets", "icons", "opensight_icon.png"))
+            ico_path = _resource_path(os.path.join("assets", "icons", "opensight_icon.ico"))
             img = Image.open(icon_png_path)
             self.window_icon_tk = ImageTk.PhotoImage(img)
             self.root.iconphoto(True, self.window_icon_tk)

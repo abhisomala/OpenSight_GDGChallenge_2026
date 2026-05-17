@@ -149,8 +149,15 @@ async def run_general_agent(
     scraped = _get_scraped_product_info()
     scraped_context = ""
 
+    _PRODUCT_Q_RE = re.compile(
+        r'\b(ingredient|nutrition|calorie|allergen|contain|made of|protein|carb|fat|sugar|'
+        r'sodium|fiber|review|rating|side effect|dosage|dose|feature|what is it|about it)\b',
+        re.IGNORECASE,
+    )
+
     if scraped and (scraped.get("ingredients") or scraped.get("bullets")):
-        scraped_context = _build_scraped_context(scraped, clean_question)
+        if product_name or _PRODUCT_Q_RE.search(clean_question):
+            scraped_context = _build_scraped_context(scraped, clean_question)
 
     history_text = ""
     if history:

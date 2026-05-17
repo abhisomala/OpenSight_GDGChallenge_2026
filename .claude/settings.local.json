@@ -4,7 +4,29 @@
       "Bash(.venvScriptspython.exe -c ' *)",
       "Bash(.venv/Scripts/python.exe -c ' *)",
       "Bash(cmd /c \".venv\\\\\\\\Scripts\\\\\\\\python.exe -c \\\\\"import sys; print\\(sys.executable\\); print\\(sys.version\\)\\\\\"\")",
-      "Bash(.venv/Scripts/python.exe -m pip install aiohttp --quiet)"
+      "Bash(.venv/Scripts/python.exe -m pip install aiohttp --quiet)",
+      "Bash(python -c \"import sounddevice as sd; print\\('Default input device index:', sd.default.device[0]\\); info = sd.query_devices\\(sd.default.device[0], 'input'\\); print\\('Device info:', info\\)\")",
+      "Bash(python -c \"import sounddevice as sd; devices = sd.query_devices\\(\\); print\\(devices\\)\")",
+      "Bash(python -c ' *)",
+      "PowerShell(Stop-Process *)",
+      "PowerShell(Stop-Job *)",
+      "Bash(python -m PyInstaller.__main__ --version)",
+      "Bash(pyi-archive_viewer dist/OpenSight.exe)",
+      "Bash(python -c \"import websockets; print\\('websockets version:', websockets.__version__\\)\")",
+      "Bash(grep -v \"driver\\\\\\\\\\\\\\\\package\")",
+      "Bash(python -m pip list)",
+      "Bash(.venv\\\\Scripts\\\\python.exe -c \"import websockets; print\\('websockets OK', websockets.__version__\\)\")",
+      "PowerShell(cd \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\"; $env:PYTHONIOENCODING=\"utf-8\"; [Console]::OutputEncoding = [System.Text.Encoding]::UTF8; .\\\\.venv\\\\Scripts\\\\python.exe -u eval_test.py 2>&1)",
+      "Bash(python -c \"import websockets; print\\('websockets ok'\\)\")",
+      "Bash(python run_memory_tests.py)",
+      "Bash(python run_memory_tests_v2.py)",
+      "Bash(git checkout *)",
+      "Bash(del \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\\\\.deploy_env.tmp\")",
+      "Bash(python run_target_tests.py)",
+      "Bash(pip show *)",
+      "Bash(findstr /i \"name version not\")",
+      "Bash(del \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\\\\run_target_tests.py\")",
+      "Bash(.venv\\\\Scripts\\\\pyinstaller.exe OpenSight.spec)"
     ]
   }
 }

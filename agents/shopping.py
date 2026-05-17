@@ -34,8 +34,8 @@ def _clean_query(query: str) -> str:
 
 def _shorten_title(title: str) -> str:
     title = re.split(r',|-|\|', title)[0].strip()
-    if len(title) > 30:
-        title = title[:30].rsplit(' ', 1)[0]
+    if len(title) > 45:
+        title = title[:45].rsplit(' ', 1)[0]
     return title
 
 
@@ -168,8 +168,8 @@ def _handle_followup_query(query: str, shopping_memory: dict) -> str:
     text = (query or "").lower()
 
     if "repeat" in text:
-        parts = [f"{i+1}: {_shorten_title(r['title'])} for {r['price']}" for i, r in enumerate(results)]
-        return " ".join(parts)
+        parts = [f"Option {i+1}, {_shorten_title(r['title'])} at {r['price']}" for i, r in enumerate(results)]
+        return ". ".join(parts) + "."
 
     if idx is None:
         return "Which one — the first, second, or third?"
@@ -190,6 +190,12 @@ def synthesize_shopping_response(
     Returns (response_text, memory_update).
     """
     results = browser_data.get("results", [])
+
+    if browser_data.get("error"):
+        response = "Shopping isn't available right now. Try running the app locally."
+        if memory is not None:
+            memory.add_turn("assistant", response, agent="shopping")
+        return response, shopping_mem
 
     if not results:
         response = "I couldn't find anything for that. Try rephrasing?"

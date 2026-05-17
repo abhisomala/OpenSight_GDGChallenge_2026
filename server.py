@@ -111,6 +111,7 @@ _conversation_history: list = _load_conversation_history()
 _shopping_memory: dict = _load_shopping_memory()
 _last_intent: str = ""
 _session_memory: SessionMemory = SessionMemory.load()
+_session_shopping_active: bool = False
 
 
 def close_all_browsers():
@@ -139,16 +140,29 @@ _ACTIONABLE_SHORT = re.compile(
     re.IGNORECASE,
 )
 
+_SINGLE_WORD_GENERAL = re.compile(
+    r"^(yes|no|stop|okay|ok|sure|thanks|thank you|got it|nevermind|"
+    r"cancel|quit|exit|help|again|more|less|next|back|done|fine|alright)$",
+    re.IGNORECASE,
+)
+
 
 def _is_garbled(text: str) -> bool:
     words = text.split()
     if len(words) < 3 and not _ACTIONABLE_SHORT.search(text):
-        return True
+        if not _SINGLE_WORD_GENERAL.match(text.strip()):
+            return True
     if text.strip().endswith("?") and len(words) < 2:
         return True
     fragments = ["can you", "try finding", "in?", "that in"]
     if sum(1 for f in fragments if f in text.lower()) >= 2:
         return True
+    # Reject if overall vowel density across the sentence is very low (keyboard mash)
+    alpha_chars = [c for c in text.lower() if c.isalpha()]
+    if len(alpha_chars) >= 6:
+        vowel_count = sum(1 for c in alpha_chars if c in 'aeiou')
+        if vowel_count / len(alpha_chars) < 0.25:
+            return True
     return False
 
 
@@ -186,10 +200,18 @@ async def _wait_for_browser_result(ws: WebSocket, agent_name: str, timeout: floa
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
     """Handle one OpenSight client WebSocket session."""
-    global _conversation_history, _shopping_memory, _last_intent, _session_memory
+    global _conversation_history, _shopping_memory, _last_intent, _session_memory, _session_shopping_active
 
     await ws.accept()
     print("[opensight] client connected")
+
+    # Reset per-connection state — Cloud Run reuses the process across sessions
+    _session_shopping_active = False
+    _shopping_memory.clear()
+    _shopping_memory.update({"last_query": "", "last_results": []})
+    _session_memory.entities.pop("scraped_content", None)
+    _session_memory.entities.pop("product_hint", None)
+    _session_memory.entities.pop("last_product", None)
 
 
     try:
@@ -200,7 +222,8 @@ async def websocket_endpoint(ws: WebSocket):
 
             if _is_garbled(user_text) or (
                 len(user_text.split()) < 3
-                and not _is_short_actionable_text(user_text, _shopping_memory)
+                and not _ACTIONABLE_SHORT.search(user_text)
+                and not _SINGLE_WORD_GENERAL.match(user_text.strip())
             ):
                 await ws.send_text(json.dumps({
                     "type": "response",
@@ -213,6 +236,21 @@ async def websocket_endpoint(ws: WebSocket):
             await send_status(ws, "BRAIN", "thinking", "routing")
 
             _session_memory.add_turn("user", user_text)
+
+            # Fast-path: bypass Gemini routing for known single-word conversational inputs
+            if len(user_text.split()) == 1 and _SINGLE_WORD_GENERAL.match(user_text.strip()):
+                fast_response = await run_general_agent(
+                    user_text, _conversation_history, memory=_session_memory
+                )
+                _conversation_history.append({"user": user_text, "assistant": fast_response})
+                if len(_conversation_history) > 10:
+                    _conversation_history.pop(0)
+                _save_conversation_history(_conversation_history)
+                _session_memory.last_query = user_text
+                _session_memory.save()
+                await ws.send_text(json.dumps({"type": "response", "text": fast_response}))
+                await send_status(ws, "IDLE", "idle")
+                continue
 
             try:
                 steps = await plan_intent(
@@ -248,7 +286,7 @@ async def websocket_endpoint(ws: WebSocket):
 
                     # ── SHOPPING ───────────────────────────────────────────────
                     if intent == "SHOPPING":
-                        if _is_followup_query(query) and _shopping_memory.get("last_results"):
+                        if _is_followup_query(query) and _session_shopping_active and _shopping_memory.get("last_results"):
                             if _is_open_intent(query):
                                 # Open a specific product — send browser_action, fire-and-forget
                                 product_url = get_followup_product_url(query, _shopping_memory)
@@ -283,6 +321,8 @@ async def websocket_endpoint(ws: WebSocket):
                             result, memory_update = synthesize_shopping_response(
                                 browser_data, query, _shopping_memory, _session_memory
                             )
+                            if memory_update.get("last_results"):
+                                _session_shopping_active = True
 
                     # ── RESEARCH ──────────────────────────────────────────────
                     elif intent == "RESEARCH":
@@ -357,6 +397,9 @@ async def websocket_endpoint(ws: WebSocket):
                     if intent == "SHOPPING" and memory_update is not None:
                         _shopping_memory.update(memory_update)
                         _save_shopping_memory(_shopping_memory)
+                        # Clear product_hint so research context doesn't bleed into post-shopping queries
+                        if _session_memory.entities.get("product_hint"):
+                            _session_memory.entities.pop("product_hint", None)
 
                 if len(all_responses) == 1:
                     final_response = all_responses[0]

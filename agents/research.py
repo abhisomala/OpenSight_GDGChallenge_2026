@@ -32,7 +32,10 @@ _FOLLOWUP_KEYWORDS = re.compile(
     r"tell me more|more about|what did they|how did they|their approach|"
     r"first paper|second paper|that paper|the paper|that study|the study|"
     r"that research|the research|open|pull up|launch|show me|"
-    r"second one|first one|that one|the first|the second)\b",
+    r"second one|first one|that one|the first|the second|"
+    r"participants|sample|university|institution|conducted|recent|"
+    r"compared|results|conclude|how many|what year|which journal|"
+    r"what was|what were|what is the)\b",
     re.IGNORECASE,
 )
 
@@ -80,10 +83,12 @@ def _extract_product_hint(papers: list, query: str) -> str:
 def _build_response(papers: list) -> str:
     if not papers:
         return "I couldn't find any papers on that."
-    p1 = _shorten_title(papers[0].get('title', 'Unknown'))
+    raw1 = papers[0].get('title', 'Unknown')
+    p1 = _shorten_title(raw1) + ("..." if len(raw1) > 50 else "")
     if len(papers) == 1:
         return f"Found one paper — {p1}. Want to know more about it?"
-    p2 = _shorten_title(papers[1].get('title', 'Unknown'))
+    raw2 = papers[1].get('title', 'Unknown')
+    p2 = _shorten_title(raw2) + ("..." if len(raw2) > 50 else "")
     return f"Got two papers. First is {p1}, and second is {p2}. Want to know more about either?"
 
 
@@ -93,6 +98,8 @@ def _is_new_search(query: str) -> bool:
 
 def _is_followup(query: str) -> bool:
     """Detect follow-up questions about earlier research results."""
+    if re.search(r'\[context:', query):
+        return True
     if not research_memory["last_papers"] or not research_memory["last_query"]:
         return False
     if _is_new_search(query):
@@ -173,6 +180,16 @@ async def search_scholar(
         lambda: GoogleSearch(params).get_dict(),
     )
     papers = results.get("organic_results", [])
+
+    # Deduplicate by title
+    seen_titles = set()
+    unique_papers = []
+    for p in papers:
+        title = p.get("title", "").strip().lower()
+        if title and title not in seen_titles:
+            seen_titles.add(title)
+            unique_papers.append(p)
+    papers = unique_papers
 
     if papers:
         await _status(f"Found {len(papers)} papers · ranking by relevance...")

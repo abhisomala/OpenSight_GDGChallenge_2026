@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sys
 import queue
 import threading
 import time
@@ -303,10 +304,14 @@ def speak_text(state, text: str):
 
     tts_creds = os.getenv("GOOGLE_TTS_CREDENTIALS")
 
+    # When running as PyInstaller exe, resolve path relative to bundled resources
+    if tts_creds and hasattr(sys, '_MEIPASS') and not os.path.isabs(tts_creds):
+        tts_creds = os.path.join(sys._MEIPASS, tts_creds)
+
     if tts_creds and os.path.exists(tts_creds):
         try:
             from google.cloud import texttospeech
-            import pygame
+    
 
             os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = tts_creds
             client = texttospeech.TextToSpeechClient()
@@ -317,7 +322,7 @@ def speak_text(state, text: str):
                 name=os.getenv("GOOGLE_TTS_VOICE", "en-US-Journey-F"),
             )
             audio_config = texttospeech.AudioConfig(
-                audio_encoding=texttospeech.AudioEncoding.MP3
+                audio_encoding=texttospeech.AudioEncoding.LINEAR16
             )
 
             response = client.synthesize_speech(
@@ -326,16 +331,15 @@ def speak_text(state, text: str):
                 audio_config=audio_config,
             )
 
-            with tempfile.NamedTemporaryFile(suffix=".mp3", delete=False) as f:
+            with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as f:
                 f.write(response.audio_content)
                 tmp_path = f.name
 
-            pygame.mixer.init()
-            pygame.mixer.music.load(tmp_path)
-            pygame.mixer.music.play()
-            while pygame.mixer.music.get_busy():
-                pygame.time.wait(100)
-            pygame.mixer.quit()
+            import subprocess
+            subprocess.run(
+                ["powershell", "-c", f'(New-Object Media.SoundPlayer "{tmp_path}").PlaySync()'],
+                check=False
+            )
             os.unlink(tmp_path)
             return
 
