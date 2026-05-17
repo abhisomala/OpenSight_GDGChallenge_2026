@@ -61,13 +61,53 @@ def _extract_product_hint(papers: list, query: str) -> str:
         (r"zinc",                                "zinc supplement"),
         (r"vitamin\s*c|ascorb",                  "vitamin C supplement"),
         (r"b12|cobalamin",                       "vitamin B12 supplement"),
-        (r"iron",                                "iron supplement"),
+        (r"\biron\b",                            "iron supplement"),
         (r"caffeine|coffee",                     "caffeine supplement"),
         (r"protein",                             "protein supplement"),
         (r"ashwagandha|adaptogen",               "ashwagandha supplement"),
         (r"berberine",                           "berberine supplement"),
         (r"resveratrol",                         "resveratrol supplement"),
         (r"CoQ10|coenzyme",                      "CoQ10 supplement"),
+        # ── Electronics / Audio ───────────────────────────────────────────────
+        (r"noise.cancel|headphone|over.ear|on.ear|earphone", "noise-canceling headphones"),
+        (r"earbud|in.ear|tws|wireless\s*audio",              "wireless earbuds"),
+        (r"bluetooth\s*speaker|portable\s*speaker",          "bluetooth speaker"),
+        (r"laptop|notebook|ultrabook",                       "laptop"),
+        (r"tablet|ipad\s*alternative",                       "tablet"),
+        (r"smartphone|android\s*phone",                      "smartphone"),
+        (r"smartwatch|fitness\s*watch|wearable",             "smartwatch"),
+        (r"keyboard|mechanical\s*key",                       "mechanical keyboard"),
+        (r"monitor|display\s*screen",                        "computer monitor"),
+        (r"webcam|video\s*call\s*camera",                    "webcam"),
+        (r"camera|mirrorless|dslr",                          "camera"),
+        (r"router|wifi|mesh\s*network",                      "wifi router"),
+        (r"charger|power\s*bank|portable\s*power",           "portable charger"),
+        # ── Fitness / Exercise ────────────────────────────────────────────────
+        (r"yoga\s*mat|yoga",                                 "yoga mat"),
+        (r"resistance\s*band|strength\s*training",           "resistance bands"),
+        (r"dumbbell|weight\s*training|home\s*gym",           "dumbbells"),
+        (r"treadmill|running\s*machine",                     "treadmill"),
+        (r"foam\s*roll|muscle\s*recovery",                   "foam roller"),
+        (r"running\s*shoe|athletic\s*shoe",                  "running shoes"),
+        (r"fitness\s*tracker|step\s*counter",                "fitness tracker"),
+        # ── Ergonomics / Office ───────────────────────────────────────────────
+        (r"standing\s*desk|sit.stand",                       "standing desk"),
+        (r"ergonomic\s*chair|office\s*chair|back\s*pain",    "ergonomic chair"),
+        (r"lumbar\s*support|back\s*support",                 "lumbar support cushion"),
+        # ── Food / Nutrition ──────────────────────────────────────────────────
+        (r"peanut.free|nut.free|allergy.friendly",           "peanut-free snacks"),
+        (r"gluten.free\s*snack",                             "gluten-free snacks"),
+        (r"keto\s*snack|low\s*carb\s*snack",                 "keto snacks"),
+        (r"protein\s*snack|high\s*protein\s*food",           "high protein snacks"),
+        (r"organic\s*snack|healthy\s*snack",                 "healthy snacks"),
+        (r"green\s*tea|matcha",                              "matcha green tea"),
+        (r"air\s*fryer",                                     "air fryer"),
+        (r"blender|smoothie",                                "blender"),
+        # ── Sleep / Wellness ──────────────────────────────────────────────────
+        (r"sleep\s*aid|insomnia|sleep\s*quality",            "sleep supplement"),
+        (r"mattress",                                        "mattress"),
+        (r"white\s*noise|sleep\s*sound",                     "white noise machine"),
+        (r"light\s*therapy|sad\s*lamp|seasonal",             "light therapy lamp"),
     ]
     full_text = query + " " + " ".join(p.get("title", "") for p in papers[:3])
     for pattern, hint in mappings:
@@ -77,7 +117,7 @@ def _extract_product_hint(papers: list, query: str) -> str:
                  "study", "some", "give", "recent", "latest", "effects",
                  "impact", "role", "the", "and", "for", "on", "of", "in"}
     words = [w for w in query.split() if len(w) > 3 and w.lower() not in stopwords]
-    return " ".join(words[:3]) + " supplement" if words else ""
+    return " ".join(words[:3]) if words else ""
 
 
 def _build_response(papers: list) -> str:
@@ -220,8 +260,11 @@ def synthesize_research_response(
         memory.add_turn("assistant", resp, agent="research")
 
         product_hint = _extract_product_hint(papers, clean_query)
+        print(f"[research] clean_query: '{clean_query}'")
+        print(f"[research] product_hint extracted: '{product_hint}'")
         if product_hint:
             memory.entities["product_hint"] = product_hint
+            print(f"[research] stored product_hint: '{product_hint}'")
 
         stopwords = {"what", "find", "show", "tell", "about", "papers", "research",
                      "study", "some", "give", "recent", "latest", "best", "good"}

@@ -219,6 +219,7 @@ async def websocket_endpoint(ws: WebSocket):
             data = await ws.receive_text()
             message = json.loads(data)
             user_text = message.get("text", "")
+            print(f"[opensight] user_text: '{user_text}'")
 
             if _is_garbled(user_text) or (
                 len(user_text.split()) < 3
@@ -421,7 +422,9 @@ async def websocket_endpoint(ws: WebSocket):
 
             except Exception as e:
                 final_response = f"Sorry, I ran into an issue: {str(e)}"
-                print("[opensight] error")
+                print(f"[opensight] error: {e}")
+                import traceback
+                traceback.print_exc()
 
             _conversation_history.append({"user": user_text, "assistant": final_response})
             if len(_conversation_history) > 10:
