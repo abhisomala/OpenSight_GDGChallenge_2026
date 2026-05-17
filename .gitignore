@@ -14,4 +14,8 @@ tts_credentials.json
 dist/
 build/
 *.spec.bak
+.deploy_env.tmp
 OpenSight-debug.spec
+.deploy_env.tmp
+
+run_tests.py
