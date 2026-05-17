@@ -37,7 +37,18 @@ def _shorten_title(title: str) -> str:
     if len(title) > 45:
         title = title[:45].rsplit(' ', 1)[0]
     return title
-
+def _spoken_price(price: str) -> str:
+    """Convert '$8.99' to '8 dollars and 99 cents' for TTS."""
+    if not price:
+        return ""
+    price = price.strip().lstrip("$")
+    if "." in price:
+        dollars, cents = price.split(".", 1)
+        cents = cents[:2].ljust(2, "0")
+        if cents == "00":
+            return f"{dollars} dollars"
+        return f"{dollars} dollars and {cents} cents"
+    return f"{price} dollars"
 
 def _extract_budget(query: str):
     match = re.search(r'\$(\d+)', query)
@@ -114,23 +125,22 @@ def _build_product_url(href: Optional[str], asin: Optional[str] = None) -> Optio
 def _build_response(results: list) -> str:
     if len(results) == 1:
         r = results[0]
-        return f"I found one — {_shorten_title(r['title'])} for {r['price']}."
+        return f"I found one — {_shorten_title(r['title'])} for {_spoken_price(r['price'])}."
     elif len(results) == 2:
         return (
             f"Two options. "
-            f"{_shorten_title(results[0]['title'])} at {results[0]['price']}, "
-            f"or {_shorten_title(results[1]['title'])} at {results[1]['price']}. "
+            f"{_shorten_title(results[0]['title'])} at {_spoken_price(results[0]['price'])}, "
+            f"or {_shorten_title(results[1]['title'])} at {_spoken_price(results[1]['price'])}. "
             f"Which one?"
         )
     else:
         return (
             f"Got three options. "
-            f"{_shorten_title(results[0]['title'])} at {results[0]['price']}, "
-            f"{_shorten_title(results[1]['title'])} at {results[1]['price']}, "
-            f"or {_shorten_title(results[2]['title'])} at {results[2]['price']}. "
+            f"{_shorten_title(results[0]['title'])} at {_spoken_price(results[0]['price'])}, "
+            f"{_shorten_title(results[1]['title'])} at {_spoken_price(results[1]['price'])}, "
+            f"or {_shorten_title(results[2]['title'])} at {_spoken_price(results[2]['price'])}. "
             f"Which one?"
         )
-
 
 def get_followup_product_url(query: str, shopping_memory: dict) -> Optional[str]:
     """Return the product URL for an open-intent followup, or None if can't determine."""
@@ -168,15 +178,14 @@ def _handle_followup_query(query: str, shopping_memory: dict) -> str:
     text = (query or "").lower()
 
     if "repeat" in text:
-        parts = [f"Option {i+1}, {_shorten_title(r['title'])} at {r['price']}" for i, r in enumerate(results)]
+        parts = [f"Option {i+1}, {_shorten_title(r['title'])} at {_spoken_price(r['price'])}" for i, r in enumerate(results)]
         return ". ".join(parts) + "."
 
     if idx is None:
         return "Which one — the first, second, or third?"
 
     selected = results[idx]
-    return f"That's the {_shorten_title(selected['title'])}, going for {selected['price']}. Want me to open it?"
-
+    return f"That's the {_shorten_title(selected['title'])}, going for {_spoken_price(selected['price'])}. Want me to open it?"
 
 def synthesize_shopping_response(
     browser_data: dict,
@@ -212,8 +221,8 @@ def synthesize_shopping_response(
         else:
             cheapest = min(results, key=lambda r: r.get("price_val") or 9999)
             response = (
-                f"Nothing under ${int(budget)}, sorry. "
-                f"Closest I found is the {_shorten_title(cheapest['title'])} at {cheapest['price']}."
+                f"Nothing under {int(budget)} dollars, sorry. "
+                f"Closest I found is the {_shorten_title(cheapest['title'])} at {_spoken_price(cheapest['price'])}."
             )
             memory_out = {
                 "last_query": _clean_query(query),

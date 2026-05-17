@@ -27,7 +27,12 @@
       "Bash(findstr /i \"name version not\")",
       "Bash(del \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\\\\run_target_tests.py\")",
       "Bash(.venv\\\\Scripts\\\\pyinstaller.exe OpenSight.spec)",
-      "Bash(.venv\\\\Scripts\\\\python.exe -c \"import websockets; print\\('websockets ok', websockets.__version__\\)\")"
+      "Bash(.venv\\\\Scripts\\\\python.exe -c \"import websockets; print\\('websockets ok', websockets.__version__\\)\")",
+      "Bash(.venv/Scripts/python _tmp_rc_test.py)",
+      "Bash(Remove-Item *)",
+      "Bash(.venv/Scripts/python _tmp_rc2_test.py)",
+      "Bash(.venv\\\\Scripts\\\\python.exe _tmp_quality_test.py)",
+      "Bash(python _tmp_quality_test.py)"
     ]
   }
 }

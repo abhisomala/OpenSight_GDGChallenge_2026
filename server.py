@@ -212,7 +212,7 @@ async def websocket_endpoint(ws: WebSocket):
     _session_memory.entities.pop("scraped_content", None)
     _session_memory.entities.pop("product_hint", None)
     _session_memory.entities.pop("last_product", None)
-
+    _session_memory.entities.pop("last_general_topic", None)
 
     try:
         while True:
@@ -383,12 +383,21 @@ async def websocket_endpoint(ws: WebSocket):
                         result = await run_calendar_agent(query, memory=_session_memory)
                         memory_update = None
 
-                    # ── GENERAL ───────────────────────────────────────────────
+# ── GENERAL ───────────────────────────────────────────────
                     else:
                         result = await run_general_agent(
                             query, _conversation_history, memory=_session_memory
                         )
                         memory_update = None
+                        # Store topic for GENERAL→RESEARCH pronoun resolution
+                        topic_words = re.sub(
+                            r'\b(what is|what are|what were|how does|how do|why is|'
+                            r'why are|tell me about|explain|describe|define|can you)\b',
+                            '', query, flags=re.IGNORECASE
+                        )
+                        topic_words = re.sub(r'\[context:[^\]]+\]', '', topic_words).strip()
+                        if topic_words and 1 <= len(topic_words.split()) <= 8:
+                            _session_memory.entities["last_general_topic"] = topic_words
 
                     _last_intent = intent
                     all_responses.append(result)

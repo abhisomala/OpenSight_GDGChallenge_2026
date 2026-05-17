@@ -12,10 +12,15 @@ client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))  # Google technology:
 # Verify these strings match your pinned google-genai SDK version.
 # Run: python -c "from google import genai; help(genai)" to check accepted model names.
 MODELS = [
-    "gemini-2.5-flash",
-    "gemini-2.5-pro",
-    "gemini-1.5-flash",
-    "gemini-1.5-pro",
+    "gemini-2.5-flash",              # primary — best quality
+    "gemini-3-flash-preview",        # separate preview quota bucket
+    "gemini-3.1-flash-lite-preview", # another separate preview bucket  
+    "gemini-3.1-flash-lite",         # stable lite, 15 RPM
+    "gemini-2.5-flash-lite",         # 2.5 lite fallback
+    "gemini-flash-latest",           # alias — may resolve to different bucket
+    "gemini-flash-lite-latest",      # alias lite
+    "gemini-2.0-flash-lite",         # deprecated but not shut down yet (Sept 2026)
+    "gemini-2.0-flash",              # same, extra bucket
 ]
 
 SYSTEM_PROMPT = """
@@ -67,7 +72,7 @@ RESEARCH_EXPLICIT_PATTERN = re.compile(
 )
 
 SHOPPING_FOLLOWUP_PATTERN = re.compile(
-    r"\b(open|click|buy|select|choose|option\s*\d+|first|second|third|1st|2nd|3rd|"
+    r"\b(open|click|buy|select|choose|pick|option|option\s*\d+|first|second|third|1st|2nd|3rd|"
     r"that one|this one|the first one|the second one|the third one|repeat|tell me more|more about)\b",
     re.IGNORECASE,
 )
@@ -85,6 +90,31 @@ PRODUCT_CONTEXT_PATTERN = re.compile(
     re.IGNORECASE,
 )
 
+GENERAL_KNOWLEDGE_PATTERN = re.compile(
+    r"^(what\b|how\b|why\b|who\b|when\b|where\b|which\b|"
+    r"tell me (about|more|how)|"
+    r"explain|describe|define)",
+    re.IGNORECASE,
+)
+
+EXPLICIT_RESEARCH_TRIGGER = re.compile(
+    r"\b(find.{0,10}research|find.{0,10}papers|find.{0,10}studies|"
+    r"research on|papers on|studies on|articles on|look up.{0,10}research)\b",
+    re.IGNORECASE,
+)
+
+PRONOUN_RESEARCH_PATTERN = re.compile(
+    r'\b(find|search|look up|get)\b.{0,20}\b(research|papers|studies|articles)\b'
+    r'.{0,20}\b(on\s+)?(that|it|this)\b',
+    re.IGNORECASE,
+)
+
+# Exclude "where can I find/buy/get X" from knowledge question override
+# Exclude "where can I find/buy/get X" from knowledge question override
+_WHERE_SHOPPING_RE = re.compile(
+    r'^where\b.{0,40}\b(find|buy|get|order|purchase|shop for)\b',
+    re.IGNORECASE,
+)
 
 def _has_recent_research_context(history: list | None, memory=None) -> bool:
     """Check history AND memory for a recent research result."""
@@ -193,6 +223,7 @@ async def plan_intent(
         await extract_preferences(user_text, memory)
 
     # ── product context question on an open Amazon page → GENERAL ──
+    
     if PRODUCT_CONTEXT_PATTERN.search(user_text) and _has_recent_shopping_context(history, shopping_memory):
         last_product = ""
         if shopping_memory and shopping_memory.get("last_results"):
@@ -200,8 +231,19 @@ async def plan_intent(
         enriched = f"{user_text} [context: user is looking at {last_product}]" if last_product else user_text
         return [{"intent": "GENERAL", "query": enriched}]
 
+    # ── knowledge question override → GENERAL regardless of context ──
+    # Runs BEFORE shopping checks so "what causes X" / "which Y" never
+    # accidentally matches SHOPPING_FOLLOWUP_PATTERN (e.g. "first" in "in the first place")
+    if (
+        GENERAL_KNOWLEDGE_PATTERN.search(user_text)
+        and not EXPLICIT_RESEARCH_TRIGGER.search(user_text)
+        and not re.search(r'\b(research|papers|studies|articles|paper|study)\b', user_text, re.IGNORECASE)
+        and not RESEARCH_FOLLOWUP_PATTERN.search(user_text)
+        and not _WHERE_SHOPPING_RE.search(user_text)
+    ):
+        return [{"intent": "GENERAL", "query": user_text}]
+
     # ── research followup wins over shopping followup when research words are present ──
-    # Checked BEFORE shopping followup to prevent "open the first paper" routing to Amazon.
     if _has_recent_research_context(history, memory) and RESEARCH_FOLLOWUP_PATTERN.search(user_text):
         last_research = ""
         for turn in reversed(history):
@@ -221,12 +263,10 @@ async def plan_intent(
         return [{"intent": "SHOPPING", "query": user_text}]
 
     # ── cross-agent: research → shopping handoff ──
-    # User says something shopping-intent after a research turn → inject product_hint
     if _has_recent_research_context(history, memory) and SHOPPING_INTENT_PATTERN.search(user_text):
         product_hint = ""
         if memory is not None:
             product_hint = memory.entities.get("product_hint", "")
-
         if product_hint:
             price_match = re.search(
                 r"(under \$[\d]+|less than \$[\d]+|below \$[\d]+|under [\d]+|for under \$[\d]+)",
@@ -238,8 +278,20 @@ async def plan_intent(
         else:
             return [{"intent": "SHOPPING", "query": user_text}]
 
+    # ── GENERAL→RESEARCH pronoun resolution ──
+    
+  
+    if PRONOUN_RESEARCH_PATTERN.search(user_text) and memory is not None:
+        last_topic = memory.entities.get("last_general_topic", "")
+        if last_topic:
+            enriched_query = re.sub(
+                r'\b(that|it|this)\b', last_topic, user_text, flags=re.IGNORECASE
+            )
+            return [{"intent": "RESEARCH", "query": enriched_query}]
+
     # ── general Gemini routing ──
     history_text = ""
+
     if history:
         history_text = "\n\nRecent conversation:\n"
         for turn in history:
@@ -262,3 +314,5 @@ async def plan_intent(
         return data.get("steps", [{"intent": "GENERAL", "query": user_text}])
     except json.JSONDecodeError:
         return [{"intent": "GENERAL", "query": user_text}]
+
+  
