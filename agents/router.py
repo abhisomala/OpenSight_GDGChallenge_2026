@@ -267,6 +267,7 @@ async def plan_intent(
         product_hint = ""
         if memory is not None:
             product_hint = memory.entities.get("product_hint", "")
+
         if product_hint:
             price_match = re.search(
                 r"(under \$[\d]+|less than \$[\d]+|below \$[\d]+|under [\d]+|for under \$[\d]+)",
@@ -277,7 +278,6 @@ async def plan_intent(
             return [{"intent": "SHOPPING", "query": enriched_query}]
         else:
             return [{"intent": "SHOPPING", "query": user_text}]
-
     # ── GENERAL→RESEARCH pronoun resolution ──
     
   

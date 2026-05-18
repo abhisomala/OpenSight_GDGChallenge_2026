@@ -210,7 +210,6 @@ async def websocket_endpoint(ws: WebSocket):
     _shopping_memory.clear()
     _shopping_memory.update({"last_query": "", "last_results": []})
     _session_memory.entities.pop("scraped_content", None)
-    _session_memory.entities.pop("product_hint", None)
     _session_memory.entities.pop("last_product", None)
     _session_memory.entities.pop("last_general_topic", None)
 
@@ -260,6 +259,7 @@ async def websocket_endpoint(ws: WebSocket):
                     memory=_session_memory,
                     shopping_memory=_shopping_memory,
                 )
+                print(f"[server] plan_intent steps: {steps}")
 
                 all_responses = []
                 previous_result = ""
@@ -313,6 +313,8 @@ async def websocket_endpoint(ws: WebSocket):
                                 )
                         else:
                             # New Amazon search — must wait for browser_result to get results
+                            print(f"[server] SHOPPING search — query: '{query}'")
+                            print(f"[server] product_hint in memory: '{_session_memory.entities.get('product_hint', 'NONE')}'")
                             await ws.send_text(json.dumps({
                                 "type": "browser_action",
                                 "agent": "SHOPPING",

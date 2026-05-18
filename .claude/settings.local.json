@@ -32,7 +32,10 @@
       "Bash(Remove-Item *)",
       "Bash(.venv/Scripts/python _tmp_rc2_test.py)",
       "Bash(.venv\\\\Scripts\\\\python.exe _tmp_quality_test.py)",
-      "Bash(python _tmp_quality_test.py)"
+      "Bash(python _tmp_quality_test.py)",
+      "Bash(python _tmp_memory_diag.py)",
+      "Bash(.venv\\\\Scripts\\\\pip install *)",
+      "Bash(.venv\\\\Scripts\\\\python _tmp_memory_diag.py)"
     ]
   }
 }

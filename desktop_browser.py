@@ -150,12 +150,10 @@ def run_amazon_search(query: str) -> dict:
                 page = context.new_page()
                 browser_manager.register(_close)
 
-                page.goto("https://www.amazon.com")
-                page.wait_for_load_state("domcontentloaded")
-
+                from urllib.parse import quote_plus
                 clean = _clean_query(query)
-                page.fill('#twotabsearchtextbox', clean)
-                page.press('#twotabsearchtextbox', 'Enter')
+                search_url = f"https://www.amazon.com/s?k={quote_plus(clean)}"
+                page.goto(search_url)
                 page.wait_for_load_state("domcontentloaded")
 
                 hwnd = browser_manager._find_chromium_hwnd(timeout=6.0, seen_before=pre_launch)
