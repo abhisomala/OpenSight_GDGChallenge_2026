@@ -50,7 +50,7 @@ def _shorten_title(title: str) -> str:
 def _extract_product_hint(papers: list, query: str) -> str:
     """Infer a shopping hint from research papers and the query."""
     mappings = [
-        (r"omega.?3|fish oil|dha|epa",         "omega-3 fish oil supplement"),
+        (r"omega.?3|fish oil|\bdha\b|\bepa\b",   "omega-3 fish oil supplement"),
         (r"magnesium",                           "magnesium supplement"),
         (r"vitamin\s*d",                         "vitamin D supplement"),
         (r"melatonin|sleep",                     "melatonin sleep supplement"),
@@ -109,9 +109,17 @@ def _extract_product_hint(papers: list, query: str) -> str:
         (r"white\s*noise|sleep\s*sound",                     "white noise machine"),
         (r"light\s*therapy|sad\s*lamp|seasonal",             "light therapy lamp"),
     ]
-    full_text = query + " " + " ".join(p.get("title", "") for p in papers[:3])
+    # Check query alone first — query is always the authoritative topic indicator.
+    # Paper titles may mention unrelated supplements in comparative studies,
+    # which would cause the wrong pattern to fire before the correct one.
     for pattern, hint in mappings:
-        if re.search(pattern, full_text, re.IGNORECASE):
+        if re.search(pattern, query, re.IGNORECASE):
+            return hint
+
+    # Fall back to paper titles if query alone didn't match.
+    title_text = " ".join(p.get("title", "") for p in papers[:3])
+    for pattern, hint in mappings:
+        if re.search(pattern, title_text, re.IGNORECASE):
             return hint
     stopwords = {"what", "find", "show", "tell", "about", "papers", "research",
                  "study", "some", "give", "recent", "latest", "effects",

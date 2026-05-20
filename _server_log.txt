@@ -1,0 +1,102 @@
+﻿.\.venv\Scripts\python.exe : INFO:     Started server process [30220]
+At line:1 char:54
++ ... ight\GDG2"; .\.venv\Scripts\python.exe -m uvicorn server:app --host 1 ...
++                 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (INFO:     Started server process [30220]:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+INFO:     Waiting for application startup.
+INFO:     Application startup complete.
+INFO:     Uvicorn running on http://127.0.0.1:8080 (Press CTRL+C to quit)
+INFO:     127.0.0.1:51250 - "WebSocket /ws" [accepted]
+INFO:     connection open
+INFO:     connection closed
+INFO:     127.0.0.1:51253 - "WebSocket /ws" [accepted]
+INFO:     connection open
+ConnectionClosedOK exception in shielded future
+future: <Future finished exception=ConnectionClosedOK(Close(code=1000, reason=''), Close(code=1000, reason=''), True)>
+websockets.exceptions.ConnectionClosedOK: received 1000 (OK); then sent 1000 (OK)
+INFO:     connection closed
+Traceback (most recent call last):
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\uvicorn\protocols\websockets\websockets_impl.py", line 317, in asgi_send
+    await self.send(data)  # type: ignore[arg-type]
+    ^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\websockets\legacy\protocol.py", line 618, in send
+    await self.ensure_open()
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\websockets\legacy\protocol.py", line 916, in ensure_open
+    raise self.connection_closed_exc()
+websockets.exceptions.ConnectionClosedOK: received 1000 (OK); then sent 1000 (OK)
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\starlette\websockets.py", line 86, in send
+    await self._send(message)
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\starlette\_exception_handler.py", line 39, in sender
+    await send(message)
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\uvicorn\protocols\websockets\websockets_impl.py", line 330, in asgi_send
+    raise ClientDisconnected from exc
+uvicorn.protocols.utils.ClientDisconnected
+
+During handling of the above exception, another exception occurred:
+
+Traceback (most recent call last):
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\server.py", line 275, in websocket_endpoint
+    label = AGENT_LABELS.get(intent, "thinking")
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+    ...<4 lines>...
+        label,
+    
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\server.py", line 170, in send_status
+    await ws.send_text(json.dumps({
+    ...<4 lines>...
+    }))
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\starlette\websockets.py", line 166, in send_text
+    await self.send({"type": "websocket.send", "text": data})
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\starlette\websockets.py", line 89, in send
+    raise WebSocketDisconnect(code=1006)
+starlette.websockets.WebSocketDisconnect
+ERROR:    Exception in ASGI application
+Traceback (most recent call last):
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\uvicorn\protocols\websockets\websockets_impl.py", line 239, in run_asgi
+    result = await self.app(self.scope, self.asgi_receive, self.asgi_send)  # type: ignore[func-returns-value]
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\uvicorn\middleware\proxy_headers.py", line 60, in __call__
+    return await self.app(scope, receive, send)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\fastapi\applications.py", line 1163, in __call__
+    await super().__call__(scope, receive, send)
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\starlette\applications.py", line 90, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\starlette\middleware\errors.py", line 151, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\starlette\middleware\exceptions.py", line 63, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\fastapi\middleware\asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\starlette\routing.py", line 660, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\starlette\routing.py", line 680, in app
+    await route.handle(scope, receive, send)
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\starlette\routing.py", line 350, in handle
+    await self.app(scope, receive, send)
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\fastapi\routing.py", line 160, in app
+    await wrap_app_handling_exceptions(app, session)(scope, receive, send)
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\starlette\_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\starlette\_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\fastapi\routing.py", line 157, in app
+    await func(session)
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\fastapi\routing.py", line 764, in app
+    await dependant.call(**solved_result.values)
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\server.py", line 439, in websocket_endpoint
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\starlette\websockets.py", line 166, in send_text
+    await self.send({"type": "websocket.send", "text": data})
+  File "C:\Users\somal\Desktop\projects\OpenSight\GDG2\.venv\Lib\site-packages\starlette\websockets.py", line 98, in send
+    raise RuntimeError('Cannot call "send" once a close message has been sent.')
+RuntimeError: Cannot call "send" once a close message has been sent.

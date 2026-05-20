@@ -79,7 +79,7 @@ SHOPPING_FOLLOWUP_PATTERN = re.compile(
 
 SHOPPING_INTENT_PATTERN = re.compile(
     r"\b(find|get|buy|order|search|look for|shop|show me|recommend|suggest|pick)\b.{0,30}"
-    r"\b(on amazon|supplement|product|pill|capsule|tablet|powder|oil|cream|gear|device|gadget|book|item)\b"
+    r"\b(on amazon|supplement|product|pill|capsule|tablet|powder|oil|cream|gear|device|gadget|book|item|something|one|result|option)\b"
     r"|\b(on amazon|under \$|less than \$|for under|buy me|order me)\b",
     re.IGNORECASE,
 )
@@ -158,11 +158,16 @@ async def generate_with_fallback(contents: str) -> str:
         try:
             # client.models.generate_content is synchronous — run in executor
             # so it doesn't stall the FastAPI event loop on every query.
-            response = await loop.run_in_executor(
-                None,
-                lambda m=model: client.models.generate_content(model=m, contents=contents),
+            response = await asyncio.wait_for(
+                loop.run_in_executor(
+                    None,
+                    lambda m=model: client.models.generate_content(model=m, contents=contents),
+                ),
+                timeout=15.0,
             )
             return response.text.strip()
+        except asyncio.TimeoutError:
+            print(f"[gemini] {model} timed out after 15s, trying next...")
         except Exception as e:
             print(f"[gemini] {model} failed: {e}, trying next...")
     raise Exception("All Gemini models unavailable")
@@ -218,9 +223,6 @@ async def plan_intent(
 ) -> list:
     """Plan one or more agent steps for a user message."""
     history = history or []
-
-    if memory is not None:
-        await extract_preferences(user_text, memory)
 
     # ── product context question on an open Amazon page → GENERAL ──
     
@@ -290,6 +292,9 @@ async def plan_intent(
             return [{"intent": "RESEARCH", "query": enriched_query}]
 
     # ── general Gemini routing ──
+    if memory is not None:
+        await extract_preferences(user_text, memory)
+
     history_text = ""
 
     if history:

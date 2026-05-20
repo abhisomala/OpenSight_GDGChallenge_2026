@@ -215,6 +215,7 @@ async def websocket_endpoint(ws: WebSocket):
 
     try:
         while True:
+            
             data = await ws.receive_text()
             message = json.loads(data)
             user_text = message.get("text", "")
@@ -422,6 +423,8 @@ async def websocket_endpoint(ws: WebSocket):
                     )
                     final_response = await generate_with_fallback(combine_prompt)
 
+            except WebSocketDisconnect:
+                return
             except Exception as e:
                 final_response = f"Sorry, I ran into an issue: {str(e)}"
                 print(f"[opensight] error: {e}")
@@ -436,8 +439,11 @@ async def websocket_endpoint(ws: WebSocket):
             _session_memory.last_query = user_text
             _session_memory.save()
 
-            await ws.send_text(json.dumps({"type": "response", "text": final_response}))
-            await send_status(ws, "IDLE", "idle")
+            try:
+                await ws.send_text(json.dumps({"type": "response", "text": final_response}))
+                await send_status(ws, "IDLE", "idle")
+            except Exception:
+                pass
 
     except WebSocketDisconnect:
         print("[opensight] client disconnected")

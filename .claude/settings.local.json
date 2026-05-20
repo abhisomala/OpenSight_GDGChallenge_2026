@@ -35,7 +35,16 @@
       "Bash(python _tmp_quality_test.py)",
       "Bash(python _tmp_memory_diag.py)",
       "Bash(.venv\\\\Scripts\\\\pip install *)",
-      "Bash(.venv\\\\Scripts\\\\python _tmp_memory_diag.py)"
+      "Bash(.venv\\\\Scripts\\\\python _tmp_memory_diag.py)",
+      "PowerShell(Test-NetConnection *)",
+      "PowerShell(Tee-Object *)",
+      "PowerShell(Get-NetTCPConnection *)",
+      "PowerShell(Set-Location \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\"; $env:Path = \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\\\\.venv\\\\Scripts;\" + $env:Path; Start-Process -FilePath \"python\" -ArgumentList \"-m\", \"uvicorn\", \"server:app\", \"--host\", \"127.0.0.1\", \"--port\", \"8080\" -RedirectStandardOutput \"C:\\\\Users\\\\somal\\\\Desktop\\\\server_debug2.log\" -RedirectStandardError \"C:\\\\Users\\\\somal\\\\Desktop\\\\server_debug2_err.log\" -WorkingDirectory \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\" -NoNewWindow; Start-Sleep -Seconds 6; Write-Host \"Server restarted with debug prints\")",
+      "PowerShell(Out-File *)",
+      "PowerShell(Remove-Item *)",
+      "PowerShell(Set-Location \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\"; $env:Path = \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\\\\.venv\\\\Scripts;\" + $env:Path; python _tmp_verify_run2.py 2>&1 | Select-String -Pattern \"\\(PASS|FAIL|SCENARIO|product_hint\\)\" | ForEach-Object { $_.Line })",
+      "PowerShell(Set-Location \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\"; $env:Path = \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\\\\.venv\\\\Scripts;\" + $env:Path; python _tmp_verify_run2.py 2>&1 | Select-String -Pattern \"\\(PASS|FAIL|SCENARIO|TOTAL|product_hint|RUN\\)\" | ForEach-Object { $_.Line })",
+      "PowerShell(Set-Location \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\"; $env:Path = \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\\\\.venv\\\\Scripts;\" + $env:Path; python _tmp_verify_run1.py 2>&1 | Select-String -Pattern \"\\(PASS|FAIL|TOTAL|RUN \\\\d|CONFIRMED|FIX\\)\" | ForEach-Object { $_.Line })"
     ]
   }
 }
