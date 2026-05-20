@@ -86,6 +86,10 @@ class DrawMixin:
             phase = self.state.pulse_step % 15
             rr = max(orb_r + 3, orb_r + 14 - phase)
             self.bg_canvas.create_oval(cx-rr, cy-rr, cx+rr, cy+rr, fill=orb_ring, outline="")
+        elif self.is_thinking or self.is_speaking_visual:
+            ring_color = self._lerp_color(orb_core, theme["background"], 0.62)
+            self.bg_canvas.create_oval(cx-orb_r-8, cy-orb_r-8, cx+orb_r+8, cy+orb_r+8,
+                                       fill=ring_color, outline="")
         else:
             self.bg_canvas.create_oval(cx-orb_r-8, cy-orb_r-8, cx+orb_r+8, cy+orb_r+8,
                                        fill=orb_ring, outline="")
@@ -95,7 +99,7 @@ class DrawMixin:
                                    fill=theme["muted"], font=self.typo["mono_label"])
         if self.waveform_mode != "off":
             self._draw_waveform(cx, cy + orb_r + 16, theme)
-        self.bg_canvas.create_text(cx, h - 18, text="Gemini  ·  Deepgram  ·  ElevenLabs",
+        self.bg_canvas.create_text(cx, h - 18, text="Gemini  ·  Deepgram  ·  Google TTS",
                                    fill=theme["powered_by"], font=self.typo["mono_micro"], anchor="center")
 
         # transcript zones — compressed toward center
@@ -265,11 +269,13 @@ class DrawMixin:
                 try:
                     from memory import SessionMemory
                     m = SessionMemory.load()
-                    has_prefs = bool(m.preferences.get("allergies") or m.preferences.get("budget")
-                                     or m.preferences.get("diet") or m.entities.get("topics"))
+                    has_prefs = bool(
+                        m.last_agent or m.history or m.preferences or
+                        any(v for v in m.entities.values() if v)
+                    )
                 except Exception:
                     pass
-                if has_prefs:
+                if has_prefs or bool(getattr(self.state, "transcript_history", [])):
                     dot_x, dot_y = x2 - 7, y1 + 7
                     pulse_r = 3 + int(1.5 * ((math.sin(time.monotonic() * 4) + 1) / 2))
                     self.bg_canvas.create_oval(dot_x-pulse_r, dot_y-pulse_r,
@@ -289,10 +295,10 @@ class DrawMixin:
         self._destroy_context_doc_inputs()
 
         # consistent centered header across all tabs
-        self.bg_canvas.create_text(mid, 50, text=self._caps("Brain / Agents"),
+        self.bg_canvas.create_text(mid, 58, text=self._caps("Brain / Agents"),
                                    fill=theme["accent"], font=self.typo["label"], anchor="center")
         if self.state.username:
-            self.bg_canvas.create_text(mid, 65, text=f"User: {self.state.username}",
+            self.bg_canvas.create_text(mid, 73, text=f"User: {self.state.username}",
                                        fill=theme.get("meta", theme["muted"]),
                                        font=self.typo["mono_micro"], anchor="center")
 
@@ -301,11 +307,11 @@ class DrawMixin:
         chain_bottom = h - 28
         chain_top = chain_bottom - reason_panel_height
         n = len(AGENT_ORDER)
-        available = chain_top - 8 - 84
+        available = chain_top - 8 - 90
         card_h = max(38, min(46, (available - 6 * (n - 1)) // n))
         card_gap = max(4, min(8, (available - card_h * n) // max(1, n - 1)))
 
-        y_cursor = 84
+        y_cursor = 90
         for agent in AGENT_ORDER:
             yt, yb = y_cursor, y_cursor + card_h
             if yb > chain_top - 4:
@@ -426,20 +432,36 @@ class DrawMixin:
             self.bg_canvas.create_oval(knob_x-knob_r, py+ph//2-knob_r,
                                        knob_x+knob_r, py+ph//2+knob_r,
                                        fill="#ffffff", outline="")
-            y += 24
+            y += 28
         self.bg_canvas.create_line(left+8, y+2, right-8, y+2, fill=theme["panel_border"], width=1)
         y += 16
         self.bg_canvas.create_text(left+8, y, text=self._caps("Connected Services"),
                                    fill=theme["muted"], font=self.typo["label_soft"], anchor="nw")
         y += 18
-        for name, key in [("Deepgram", "DEEPGRAM_API_KEY"), ("ElevenLabs", "ELEVENLABS_API_KEY"),
-                          ("Gemini", "GEMINI_API_KEY"), ("Google Cal", "GOOGLE_CLIENT_ID"),
-                          ("SerpAPI", "SERPAPI_KEY")]:
-            ok = self._check_service(key)
+        _raw_svcs = [
+            ("Deepgram",   "DEEPGRAM_API_KEY",              False),
+            ("Google TTS", "GOOGLE_TTS_CREDENTIALS",         False),
+            ("Gemini",     "GEMINI_API_KEY",                 False),
+            ("Google Cal", "GOOGLE_APPLICATION_CREDENTIALS", False),
+            ("SerpAPI",    "SERPAPI_KEY",                    False),
+            ("ElevenLabs", "",                               True),
+        ]
+        _svcs = [(nm, self._check_service(k) if k else False, dep)
+                 for nm, k, dep in _raw_svcs]
+        _svcs.sort(key=lambda x: (x[2], not x[1], x[0]))
+        for name, ok, deprecated in _svcs:
             dc = theme["service_ok"] if ok else theme["service_off"]
             self.bg_canvas.create_oval(left+8, y+3, left+16, y+11, fill=dc, outline="")
             self.bg_canvas.create_text(left+22, y, text=name, fill=theme["text"],
                                        font=self.typo["micro"], anchor="nw")
+            if deprecated:
+                bx = left + 90
+                self._rounded_rect(bx, y+2, bx+56, y+13, radius=4,
+                                   fill=self._lerp_color(theme["panel"], theme["service_off"], 0.18),
+                                   outline=self._lerp_color(theme["panel_border"], theme["service_off"], 0.45))
+                self.bg_canvas.create_text(bx+28, y+7, text="DEPRECATED",
+                                           fill=theme["service_off"],
+                                           font=self.typo["mono_tiny"], anchor="center")
             self.bg_canvas.create_text(right-8, y, text="✓" if ok else "✗",
                                        fill=dc, font=self.typo["mono_label"], anchor="ne")
             y += 20
@@ -534,7 +556,7 @@ class DrawMixin:
         self.bg_canvas.create_line(left+10,top+32,right-10,top+32,fill=theme["reason_connector"],width=1)
         node_x, title_x = left+22, left+42
         start_y = top+50
-        step_gap = min(46, max(36, (bottom-start_y-10)//max(1,total_steps-1)))
+        step_gap = max(48, (bottom-start_y-10)//max(1,total_steps-1))
         progress_y = start_y + max(0,completed_count-1)*step_gap
         if 0 <= self.state.reasoning_active_index < total_steps:
             i = self.state.reasoning_active_index
