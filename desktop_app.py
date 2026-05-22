@@ -353,7 +353,7 @@ class LiquidGlassDisplay(ThemeMixin, DrawMixin, ContextMixin, AnimationMixin):
                 self._clear_history()
                 return
             return
-
+#test
         if self.state.active_right_tab == "context":
             for (kind, value), bbox in list(getattr(self, "pill_remove_hitboxes", {}).items()):
                 if self._point_in_box(event.x, event.y, bbox):
