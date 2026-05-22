@@ -254,6 +254,9 @@ class LiquidGlassDisplay(ThemeMixin, DrawMixin, ContextMixin, AnimationMixin):
 
     def _init_typography(self):
         families = set(tkfont.families(self.root))
+        if "Inter" not in families or "JetBrains Mono" not in families:
+            _install_project_fonts()
+            families = set(tkfont.families(self.root))
         self.font_ui = "Inter" if "Inter" in families else "Helvetica"
         self.font_mono = next(
             (f for f in ["JetBrains Mono", "SF Mono", "Menlo"] if f in families),
