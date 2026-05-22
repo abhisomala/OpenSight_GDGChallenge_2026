@@ -35,6 +35,33 @@ def _resource_path(relative_path: str) -> str:
     return os.path.join(os.path.dirname(os.path.abspath(__file__)), relative_path)
 
 
+def _install_project_fonts() -> None:
+    """Register bundled Inter + JetBrains Mono with Windows GDI before Tk boots.
+
+    Uses AddFontResourceExW (flags=0 → global) so Tk's EnumFontFamilies sees
+    them. No admin rights required; lives only for this process lifetime.
+    """
+    if os.name != "nt":
+        return
+    try:
+        import ctypes
+        fonts_dir = _resource_path(os.path.join("assets", "fonts"))
+        if not os.path.isdir(fonts_dir):
+            return
+        added = 0
+        for fname in os.listdir(fonts_dir):
+            if fname.lower().endswith(".ttf"):
+                fpath = os.path.join(fonts_dir, fname)
+                if ctypes.windll.gdi32.AddFontResourceExW(fpath, 0, None) > 0:
+                    added += 1
+        if added:
+            HWND_BROADCAST, WM_FONTCHANGE = 0xFFFF, 0x001D
+            ctypes.windll.user32.PostMessageW(HWND_BROADCAST, WM_FONTCHANGE, 0, 0)
+            print(f"[fonts] registered {added} project fonts (Inter + JetBrains Mono)")
+    except Exception as e:
+        print(f"[fonts] {e}")
+
+
 # Load .env from bundled location when running as exe
 load_dotenv(_resource_path(".env"))
 
@@ -243,8 +270,8 @@ class LiquidGlassDisplay(ThemeMixin, DrawMixin, ContextMixin, AnimationMixin):
             "micro":      (self.font_ui,   sz(11), "normal"),
             "mono_label": (self.font_mono, sz(11), "bold"),
             "mono_body":  (self.font_mono, sz(11), "normal"),
-            "mono_micro": (self.font_mono, sz(10), "normal"),
-            "mono_tiny":  (self.font_mono, sz(10), "normal"),
+            "mono_micro": (self.font_mono, 10,      "normal"),
+            "mono_tiny":  (self.font_mono, 10,      "normal"),
             "fx_large":   (self.font_ui,   sz(20), "bold"),
         }
 
@@ -299,6 +326,9 @@ class LiquidGlassDisplay(ThemeMixin, DrawMixin, ContextMixin, AnimationMixin):
         for tab_name, bbox in self.tab_hitboxes.items():
             if self._point_in_box(event.x, event.y, bbox):
                 self.state.active_right_tab = tab_name
+                if tab_name == "context":
+                    # Immediately open the default section; anim_t=0 prevents body rendering
+                    self.context_section_anim[self.context_open_section] = 1.0
                 self.redraw()
                 return
 

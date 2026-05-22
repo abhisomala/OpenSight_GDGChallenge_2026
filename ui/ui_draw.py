@@ -107,16 +107,17 @@ class DrawMixin:
         ai_text_w = max(400, int(main_w * 0.88))
         user_text_w = max(260, int(main_w * 0.60))
         lx = stack_cx - (ai_text_w // 2)
+        user_lx = stack_cx - (user_text_w // 2)
         available_h = cy - orb_r - 80
         center_y = 80 + (available_h // 2)
         top_zone_y    = center_y - 90
         divider_y     = center_y
         bottom_zone_y = center_y + 55
 
-        self.bg_canvas.create_text(lx, top_zone_y - 22, text=self._caps("YOU"),
+        self.bg_canvas.create_text(user_lx, top_zone_y - 22, text=self._caps("YOU"),
                                    fill=theme["muted"], font=self.typo["label"], anchor="w")
         if self.user_timestamp:
-            self.bg_canvas.create_text(lx + 38, top_zone_y - 22, text=self.user_timestamp,
+            self.bg_canvas.create_text(user_lx + 38, top_zone_y - 22, text=self.user_timestamp,
                                        fill=theme.get("meta", theme["muted"]), font=self.typo["mono_micro"], anchor="w")
         user_display = s.live_transcript or s.last_user_text or "Speak and your words will appear here..."
         self.bg_canvas.create_text(stack_cx, top_zone_y, text=user_display,
@@ -128,10 +129,10 @@ class DrawMixin:
         self.bg_canvas.create_line(stack_cx-160, divider_y, stack_cx+160, divider_y,
                                    fill=theme["accent"], width=1, dash=(6, 4))
 
-        # response card
+        # response card — 14px radius (--r-pill-card), height accommodates 6+ lines of body_large
         card_pad = 14
         self._rounded_rect(lx - card_pad, bottom_zone_y - 30,
-                           lx + ai_text_w + card_pad, bottom_zone_y + 115, radius=14,
+                           lx + ai_text_w + card_pad, bottom_zone_y + 135, radius=14,
                            fill=self._lerp_color(theme["panel"], bg_color, 0.55),
                            outline=self._lerp_color(theme["panel_border"], bg_color, 0.4))
 
@@ -146,12 +147,12 @@ class DrawMixin:
         if self.is_thinking:
             if self.research_status:
                 self.bg_canvas.create_text(lx, bottom_zone_y, text=self.research_status,
-                                           fill=theme["accent"], font=("SF Mono", 12),
+                                           fill=theme["accent"], font=self.typo["mono_body"],
                                            width=ai_text_w, justify="left", anchor="nw")
             else:
                 dots = "●" * (self.thinking_step % 4) or "●"
                 self.bg_canvas.create_text(stack_cx, bottom_zone_y + 14, text=dots,
-                                           fill=theme["accent"], font=("SF Mono", 20), anchor="center")
+                                           fill=theme["accent"], font=(self.font_mono, 18, "normal"), anchor="center")
         elif self.ai_render_text:
             display_text = self.ai_render_text
             if self.ai_animation_job and self._cursor_visible:
@@ -288,7 +289,11 @@ class DrawMixin:
             return
         if self.state.active_right_tab == "context":
             self._destroy_username_entry()
-            self._draw_context_panel(cl, cr, h)
+            try:
+                self._draw_context_panel(cl, cr, h)
+            except Exception as _ctx_err:
+                import traceback
+                traceback.print_exc()
             return
 
         self._destroy_username_entry()
@@ -350,16 +355,16 @@ class DrawMixin:
             detail = self._agent_detail(agent)
             if active and not disabled:
                 self.bg_canvas.create_text(cl+34, yt+21, text=detail.upper(),
-                                           fill=accent, font=self.typo["micro"], anchor="nw")
-                bx2, bx1 = cr-7, cr-53
-                by1, by2 = yt+6, yt+19
+                                           fill=accent, font=self.typo["mono_tiny"], anchor="nw")
+                bx2, bx1 = cr-5, cr-68
+                by1, by2 = yt+4, yt+21
                 self._rounded_rect(bx1, by1, bx2, by2, radius=5,
                                    fill=self._lerp_color(fill, accent, 0.20), outline=accent, width=1)
-                self.bg_canvas.create_text((bx1+bx2)//2, by1+2, text="ACTIVE ↗",
-                                           fill=accent, font=self.typo["mono_tiny"], anchor="n")
+                self.bg_canvas.create_text((bx1+bx2)//2, (by1+by2)//2, text="ACTIVE ↗",
+                                           fill=accent, font=self.typo["mono_tiny"], anchor="center")
             else:
                 self.bg_canvas.create_text(cl+34, yt+21, text=detail,
-                                           fill=detail_color, font=self.typo["micro"], anchor="nw")
+                                           fill=detail_color, font=self.typo["mono_tiny"], anchor="nw")
             y_cursor = yb + card_gap
 
         self._draw_reasoning_chain(cl, cr, chain_top, chain_bottom)
@@ -373,9 +378,9 @@ class DrawMixin:
         """Draw the settings panel and its controls."""
         cw = right - left
         mid = (left + right) // 2
-        self.bg_canvas.create_text(mid, 50, text=self._caps("Settings"),
+        self.bg_canvas.create_text(mid, 58, text=self._caps("Settings"),
                                    fill=theme["accent"], font=self.typo["label"], anchor="center")
-        y = 70
+        y = 78
         self.bg_canvas.create_text(left+8, y, text=self._caps("Appearance"),
                                    fill=theme["muted"], font=self.typo["label_soft"], anchor="nw")
         y += 18
@@ -444,7 +449,6 @@ class DrawMixin:
             ("Gemini",     "GEMINI_API_KEY",                 False),
             ("Google Cal", "GOOGLE_APPLICATION_CREDENTIALS", False),
             ("SerpAPI",    "SERPAPI_KEY",                    False),
-            ("ElevenLabs", "",                               True),
         ]
         _svcs = [(nm, self._check_service(k) if k else False, dep)
                  for nm, k, dep in _raw_svcs]
@@ -556,7 +560,8 @@ class DrawMixin:
         self.bg_canvas.create_line(left+10,top+32,right-10,top+32,fill=theme["reason_connector"],width=1)
         node_x, title_x = left+22, left+42
         start_y = top+50
-        step_gap = max(48, (bottom-start_y-10)//max(1,total_steps-1))
+        # cap step_gap so last step's row_bottom (y+22) stays within the panel
+        step_gap = max(44, min(52, (bottom-start_y-32)//max(1,total_steps-1)))
         progress_y = start_y + max(0,completed_count-1)*step_gap
         if 0 <= self.state.reasoning_active_index < total_steps:
             i = self.state.reasoning_active_index
@@ -583,7 +588,7 @@ class DrawMixin:
                 self.bg_canvas.create_oval(node_x-8,y-8,node_x+8,y+8,
                                            fill=theme["reason_complete"],outline=theme["reason_complete"])
                 self.bg_canvas.create_text(node_x,y,text="✓",fill="#ffffff",
-                                           font=(self.font_mono,9,"bold"),anchor="center")
+                                           font=self.typo["mono_tiny"],anchor="center")
             elif status=="active":
                 glow_r = 11+int(4*pulse)
                 self.bg_canvas.create_oval(node_x-glow_r,y-glow_r,node_x+glow_r,y+glow_r,
@@ -595,7 +600,7 @@ class DrawMixin:
                 self.bg_canvas.create_oval(node_x-8,y-8,node_x+8,y+8,
                                            fill=theme["reason_panel"],outline=theme["reason_pending_outline"],width=2)
                 self.bg_canvas.create_text(node_x,y,text=str(i+1),fill=theme["reason_pending_outline"],
-                                           font=(self.font_mono,8,"bold"),anchor="center")
+                                           font=self.typo["mono_tiny"],anchor="center")
             if status=="active":
                 tc=theme["reason_active"]; sc=self._lerp_color(theme["reason_row_subtext"],theme["reason_active"],0.35)
             elif status=="complete":
@@ -606,5 +611,5 @@ class DrawMixin:
                 sc=theme["reason_row_subtext"]
             self.bg_canvas.create_text(title_x,y-10,text=step["label"][:28],fill=tc,font=self.typo["section"],anchor="nw")
             self.bg_canvas.create_text(title_x,y+9,text=step.get("summary","")[:42],fill=sc,
-                                       font=(self.font_ui,10,"normal"),anchor="nw",
+                                       font=self.typo["micro"],anchor="nw",
                                        width=max(90,right-title_x-14),justify="left")

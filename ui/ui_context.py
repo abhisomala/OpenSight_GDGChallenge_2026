@@ -13,7 +13,7 @@ class ContextMixin:
         theme = self._theme()
         mid = (left + right) // 2
 
-        self.bg_canvas.create_text(mid, 46, text=self._caps("Context"),
+        self.bg_canvas.create_text(mid, 58, text=self._caps("Context"),
                                    fill=theme["accent"], font=self.typo["label"], anchor="center")
 
         mem_prefs, mem_topics, mem_last_agent, mem_last_query = {}, [], "", ""
@@ -31,10 +31,10 @@ class ContextMixin:
                        if mem_last_agent and mem_last_query
                        else (f"Last agent: {mem_last_agent}" if mem_last_agent
                              else "No activity yet this session"))
-        self.bg_canvas.create_text(mid, 61, text=status_text,
+        self.bg_canvas.create_text(mid, 73, text=status_text,
                                    fill=theme.get("meta", theme["muted"]),
                                    font=self.typo["mono_micro"], anchor="center")
-        self.bg_canvas.create_line(left + 10, 74, right - 10, 74,
+        self.bg_canvas.create_line(left + 10, 86, right - 10, 86,
                                    fill=theme["panel_border"], width=1, dash=(4, 4))
 
         sections = [
@@ -42,7 +42,7 @@ class ContextMixin:
             ("recent",    "Recent Context"),
             ("documents", f"Documents  ({len(self.context_documents)})"),
         ]
-        y = 82
+        y = 94
 
         for key, title in sections:
             is_open = self.context_open_section == key
