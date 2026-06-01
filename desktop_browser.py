@@ -154,7 +154,10 @@ def run_amazon_search(query: str) -> dict:
                 clean = _clean_query(query)
                 search_url = f"https://www.amazon.com/s?k={quote_plus(clean)}"
                 page.goto(search_url)
-                page.wait_for_load_state("domcontentloaded")
+                try:
+                    page.wait_for_selector('[data-component-type="s-search-result"]', timeout=8000)
+                except Exception:
+                    pass
 
                 hwnd = browser_manager._find_chromium_hwnd(timeout=6.0, seen_before=pre_launch)
                 if hwnd:
@@ -163,6 +166,10 @@ def run_amazon_search(query: str) -> dict:
 
                 results = []
                 items = page.query_selector_all('[data-component-type="s-search-result"]')
+                if not items:
+                    page.mouse.wheel(0, 1500)
+                    page.wait_for_timeout(800)
+                    items = page.query_selector_all('[data-component-type="s-search-result"]')
                 for item in items[:8]:
                     try:
                         title_el = item.query_selector('h2 span')

@@ -194,7 +194,7 @@ async def _deepgram_listen(state, session_token, on_final_cb, on_interim_cb, web
     url = (
         "wss://api.deepgram.com/v1/listen"
         "?model=nova-2&language=en-US&smart_format=true"
-        "&interim_results=true&endpointing=3000"
+        "&interim_results=true&endpointing=1500&utterance_end_ms=1000"
         "&encoding=linear16&channels=1"
         f"&sample_rate={state.sample_rate}"
     )

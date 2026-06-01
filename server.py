@@ -206,9 +206,13 @@ async def websocket_endpoint(ws: WebSocket):
     print("[opensight] client connected")
 
     # Reset per-connection state — Cloud Run reuses the process across sessions
-    _session_shopping_active = False
+    # Reload prior shopping results from disk on reconnect (instead of blanking them) so
+    # multi-turn follow-ups like "open the first one" survive the new-WebSocket-per-utterance
+    # model. Trades away cross-session isolation on a warm Cloud Run process — acceptable for
+    # the single-user local demo.
     _shopping_memory.clear()
-    _shopping_memory.update({"last_query": "", "last_results": []})
+    _shopping_memory.update(_load_shopping_memory())
+    _session_shopping_active = bool(_shopping_memory.get("last_results"))
     _session_memory.entities.pop("scraped_content", None)
     _session_memory.entities.pop("last_product", None)
     _session_memory.entities.pop("last_general_topic", None)
