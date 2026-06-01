@@ -4,24 +4,38 @@ import asyncio
 import json
 import re
 from google import genai
+from google.genai import errors as genai_errors
+from google.genai import types as genai_types
 from dotenv import load_dotenv
 
 load_dotenv()
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))  # Google technology: Gemini API
+# Disable the SDK's built-in retry. By default google-genai retries 429 with
+# exponential backoff via tenacity, which causes a quota-blocked call to
+# consume our full 15s timeout before we can fall through to the next model.
+# attempts=1 means one attempt total, no retries — 429 surfaces in ~100ms.
+_NO_RETRY_HTTP_OPTIONS = genai_types.HttpOptions(
+    retry_options=genai_types.HttpRetryOptions(attempts=1),
+)
+client = genai.Client(
+    api_key=os.getenv("GEMINI_API_KEY"),
+    http_options=_NO_RETRY_HTTP_OPTIONS,
+)  # Google technology: Gemini API
 
-# Verify these strings match your pinned google-genai SDK version.
-# Run: python -c "from google import genai; help(genai)" to check accepted model names.
-MODELS = [
-    "gemini-2.5-flash",              # primary — best quality
-    "gemini-3-flash-preview",        # separate preview quota bucket
-    "gemini-3.1-flash-lite-preview", # another separate preview bucket  
-    "gemini-3.1-flash-lite",         # stable lite, 15 RPM
-    "gemini-2.5-flash-lite",         # 2.5 lite fallback
-    "gemini-flash-latest",           # alias — may resolve to different bucket
-    "gemini-flash-lite-latest",      # alias lite
-    "gemini-2.0-flash-lite",         # deprecated but not shut down yet (Sept 2026)
-    "gemini-2.0-flash",              # same, extra bucket
+# Primary model is read from GEMINI_MODEL env, defaulting to the current GA Flash.
+# All fallback IDs are GA per ai.google.dev/gemini-api/docs/models — no preview aliases
+# (e.g. gemini-flash-latest) and no retired 1.5/2.0 models.
+PRIMARY_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+
+_FALLBACK_CHAIN = [
+    "gemini-3.5-flash",       # frontier GA Flash — agentic/coding optimized
+    "gemini-3.1-flash-lite",  # frontier-class lite, lower cost, separate quota
+    "gemini-2.5-flash",       # prior-gen Flash, separate quota bucket
+    "gemini-2.5-flash-lite",  # prior-gen lite, cheapest GA
 ]
+
+# Put PRIMARY_MODEL first, dedupe while preserving order so an override still
+# benefits from the rest of the chain on quota errors.
+MODELS = [PRIMARY_MODEL] + [m for m in _FALLBACK_CHAIN if m != PRIMARY_MODEL]
 
 SYSTEM_PROMPT = """
 You are a planner for a voice assistant called OpenSight.
@@ -151,6 +165,17 @@ def _has_recent_shopping_context(history: list | None, shopping_memory: dict | N
 
 # ── Gemini helpers ─────────────────────────────────────────────────────────────
 
+def _is_quota_error(exc: BaseException) -> bool:
+    """True if exc is a 429 / RESOURCE_EXHAUSTED from Gemini, regardless of wrapping."""
+    if isinstance(exc, genai_errors.ClientError):
+        if getattr(exc, "code", None) == 429:
+            return True
+        if getattr(exc, "status", None) == "RESOURCE_EXHAUSTED":
+            return True
+    msg = str(exc)
+    return "RESOURCE_EXHAUSTED" in msg or "429" in msg
+
+
 async def generate_with_fallback(contents: str) -> str:
     """Generate text with Gemini via thread executor to avoid blocking the event loop."""
     loop = asyncio.get_running_loop()
@@ -169,6 +194,10 @@ async def generate_with_fallback(contents: str) -> str:
         except asyncio.TimeoutError:
             print(f"[gemini] {model} timed out after 15s, trying next...")
         except Exception as e:
+            # Quota / rate-limit: skip to next model immediately, do not log noisily.
+            if _is_quota_error(e):
+                print(f"[gemini] {model} quota-blocked (429), trying next...")
+                continue
             print(f"[gemini] {model} failed: {e}, trying next...")
     raise Exception("All Gemini models unavailable")
 

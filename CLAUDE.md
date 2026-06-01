@@ -21,7 +21,7 @@ OpenSight is a voice-first, multi-agent AI accessibility system built for visual
 | Layer | Technology |
 |---|---|
 | Voice input | Deepgram Nova-2 real-time WebSocket STT |
-| LLM | Gemini 2.5 Flash (routing + synthesis), large model fallback list in router.py |
+| LLM | Gemini 3.5 Flash (routing + synthesis); primary set via `GEMINI_MODEL` env, fallback chain in router.py |
 | Agent orchestration | Python, custom multi-agent loop |
 | Browser automation | Playwright (Chromium) — runs on desktop client (shopping/research), server-side only for calendar |
 | Voice output | Google Cloud TTS (primary, WAV via PowerShell SoundPlayer), falls back to Windows SAPI / macOS say / Linux espeak |
@@ -43,7 +43,7 @@ GDG2/
 │   │                     # Routes to SHOPPING, RESEARCH, CALENDAR, GENERAL.
 │   │                     # generate_with_fallback() wraps Gemini in run_in_executor
 │   │                     # so it doesn't block the FastAPI event loop.
-│   │                     # MODELS list has 9 fallback models for quota resilience.
+│   │                     # MODELS = [GEMINI_MODEL env, then GA fallback chain] for quota resilience.
 │   ├── shopping.py       # Server-side Amazon synthesis only (no Playwright).
 │   │                     # synthesize_shopping_response() builds spoken response
 │   │                     # from browser_result data received from desktop client.
@@ -182,6 +182,7 @@ These are gitignored — every developer creates them manually:
 
 ```
 GEMINI_API_KEY=                    # aistudio.google.com/apikey
+GEMINI_MODEL=gemini-3.5-flash      # optional — primary Gemini model (default gemini-3.5-flash)
 DEEPGRAM_API_KEY=                  # console.deepgram.com
 GOOGLE_SEARCH_API_KEY=             # console.cloud.google.com → APIs → Custom Search
 GOOGLE_SEARCH_CX=                  # programmablesearchengine.google.com
@@ -403,7 +404,7 @@ Shopping results must come back before the server can synthesize the response (i
 
 ## Fixes Already Applied (do not revert)
 
-- `router.py` — `generate_with_fallback` is async via `run_in_executor`. Research followup check moved above shopping followup check. `RESEARCH_EXPLICIT_PATTERN` guard added. MODELS list expanded to 9 fallback models for quota resilience.
+- `router.py` — `generate_with_fallback` is async via `run_in_executor`. Research followup check moved above shopping followup check. `RESEARCH_EXPLICIT_PATTERN` guard added. Primary model now reads from `GEMINI_MODEL` env (default `gemini-3.5-flash`); MODELS chain is GA-only (`gemini-3.5-flash`, `gemini-3.1-flash-lite`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`) — preview aliases and retired 2.0/1.5 IDs removed.
 - `calendar.py` — macOS Chrome path removed, replaced with Playwright. `strftime("%-I")` replaced with `.lstrip("0")`. Google API calls wrapped in `run_in_executor`. `close_active_browser()` stub added for server.py import compatibility.
 - `research.py` — `_is_followup` uses keyword matching instead of word count. "Open it" dead-end fixed. Mutable default arg fixed. Playwright removed — execution moved to `desktop_browser.py`. `search_scholar()` / `synthesize_research_response()` split for server+client protocol. `get_open_intent()` added for server.py. Paper deduplication by title added.
 - `shopping.py` — `get_event_loop()` replaced with `get_running_loop()`. Supplement skip list added. Playwright removed — execution moved to `desktop_browser.py`. `synthesize_shopping_response()` / `run_shopping_agent()` split for server+client protocol. `get_followup_product_url()` / `get_followup_product_title()` helpers added.

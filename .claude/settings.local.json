@@ -44,7 +44,12 @@
       "PowerShell(Remove-Item *)",
       "PowerShell(Set-Location \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\"; $env:Path = \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\\\\.venv\\\\Scripts;\" + $env:Path; python _tmp_verify_run2.py 2>&1 | Select-String -Pattern \"\\(PASS|FAIL|SCENARIO|product_hint\\)\" | ForEach-Object { $_.Line })",
       "PowerShell(Set-Location \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\"; $env:Path = \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\\\\.venv\\\\Scripts;\" + $env:Path; python _tmp_verify_run2.py 2>&1 | Select-String -Pattern \"\\(PASS|FAIL|SCENARIO|TOTAL|product_hint|RUN\\)\" | ForEach-Object { $_.Line })",
-      "PowerShell(Set-Location \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\"; $env:Path = \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\\\\.venv\\\\Scripts;\" + $env:Path; python _tmp_verify_run1.py 2>&1 | Select-String -Pattern \"\\(PASS|FAIL|TOTAL|RUN \\\\d|CONFIRMED|FIX\\)\" | ForEach-Object { $_.Line })"
+      "PowerShell(Set-Location \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\"; $env:Path = \"C:\\\\Users\\\\somal\\\\Desktop\\\\projects\\\\OpenSight\\\\GDG2\\\\.venv\\\\Scripts;\" + $env:Path; python _tmp_verify_run1.py 2>&1 | Select-String -Pattern \"\\(PASS|FAIL|TOTAL|RUN \\\\d|CONFIRMED|FIX\\)\" | ForEach-Object { $_.Line })",
+      "WebFetch(domain:ai.google.dev)",
+      "Bash(.venv/Scripts/python.exe *)",
+      "Bash(curl -s -o NUL -w \"HTTP %{http_code}\\\\n\" http://127.0.0.1:8080/)",
+      "Bash(echo \"exit=$?\")",
+      "Bash(.venv/Scripts/pip.exe show *)"
     ]
   }
 }
