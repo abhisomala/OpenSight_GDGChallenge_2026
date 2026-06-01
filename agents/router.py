@@ -16,21 +16,43 @@ load_dotenv()
 _NO_RETRY_HTTP_OPTIONS = genai_types.HttpOptions(
     retry_options=genai_types.HttpRetryOptions(attempts=1),
 )
-client = genai.Client(
-    api_key=os.getenv("GEMINI_API_KEY"),
-    http_options=_NO_RETRY_HTTP_OPTIONS,
-)  # Google technology: Gemini API
 
-# Primary model is read from GEMINI_MODEL env, defaulting to the current GA Flash.
-# All fallback IDs are GA per ai.google.dev/gemini-api/docs/models — no preview aliases
-# (e.g. gemini-flash-latest) and no retired 1.5/2.0 models.
-PRIMARY_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
+
+def _make_client() -> genai.Client:
+    """Build the single Gemini client used by every caller.
+
+    When GOOGLE_GENAI_USE_VERTEXAI is truthy, route to Vertex AI (no API key,
+    uses Application Default Credentials and the configured project/location).
+    Otherwise, fall back to the Gemini Developer API with GEMINI_API_KEY.
+    Same SDK either way; only the backend changes.
+    """
+    use_vertex = os.getenv("GOOGLE_GENAI_USE_VERTEXAI", "").lower() in {"1", "true", "yes"}
+    if use_vertex:
+        return genai.Client(
+            vertexai=True,
+            project=os.getenv("GOOGLE_CLOUD_PROJECT"),
+            location=os.getenv("GOOGLE_CLOUD_LOCATION"),
+            http_options=_NO_RETRY_HTTP_OPTIONS,
+        )
+    return genai.Client(
+        api_key=os.getenv("GEMINI_API_KEY"),
+        http_options=_NO_RETRY_HTTP_OPTIONS,
+    )
+
+
+client = _make_client()  # Google technology: Gemini API (Vertex or Developer backend)
+
+# Primary model is read from GEMINI_MODEL env, defaulting to gemini-2.5-flash
+# because that is the working primary on Vertex AI us-central1 today —
+# gemini-3.5-flash and gemini-3.1-flash-lite are not yet GA in that region
+# (return 404) but are kept in the chain as forward-compat no-ops.
+PRIMARY_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
 
 _FALLBACK_CHAIN = [
-    "gemini-3.5-flash",       # frontier GA Flash — agentic/coding optimized
-    "gemini-3.1-flash-lite",  # frontier-class lite, lower cost, separate quota
-    "gemini-2.5-flash",       # prior-gen Flash, separate quota bucket
-    "gemini-2.5-flash-lite",  # prior-gen lite, cheapest GA
+    "gemini-2.5-flash",       # working primary on Vertex us-central1
+    "gemini-2.5-flash-lite",  # working lite on Vertex us-central1
+    "gemini-3.5-flash",       # forward-compat: 404s on Vertex us-central1 today
+    "gemini-3.1-flash-lite",  # forward-compat: 404s on Vertex us-central1 today
 ]
 
 # Put PRIMARY_MODEL first, dedupe while preserving order so an override still

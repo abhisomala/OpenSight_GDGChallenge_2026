@@ -21,7 +21,7 @@ OpenSight is a voice-first, multi-agent AI accessibility system built for visual
 | Layer | Technology |
 |---|---|
 | Voice input | Deepgram Nova-2 real-time WebSocket STT |
-| LLM | Gemini 3.5 Flash (routing + synthesis); primary set via `GEMINI_MODEL` env, fallback chain in router.py |
+| LLM | Gemini 2.5 Flash on **Vertex AI** (project `gdg-search-492804`, region `us-central1`) via `google-genai` SDK with `vertexai=True`. Primary set via `GEMINI_MODEL` env; fallback chain in router.py. AI Studio API key path preserved for backward compat — toggle with `GOOGLE_GENAI_USE_VERTEXAI`. |
 | Agent orchestration | Python, custom multi-agent loop |
 | Browser automation | Playwright (Chromium) — runs on desktop client (shopping/research), server-side only for calendar |
 | Voice output | Google Cloud TTS (primary, WAV via PowerShell SoundPlayer), falls back to Windows SAPI / macOS say / Linux espeak |
@@ -41,9 +41,13 @@ GDG2/
 │   ├── __init__.py
 │   ├── router.py         # Gemini intent classifier. Every query hits this first.
 │   │                     # Routes to SHOPPING, RESEARCH, CALENDAR, GENERAL.
-│   │                     # generate_with_fallback() wraps Gemini in run_in_executor
-│   │                     # so it doesn't block the FastAPI event loop.
-│   │                     # MODELS = [GEMINI_MODEL env, then GA fallback chain] for quota resilience.
+│   │                     # _make_client() picks Vertex AI vs AI Studio backend based on
+│   │                     # GOOGLE_GENAI_USE_VERTEXAI. Single source of truth — every other
+│   │                     # agent imports generate_with_fallback from here.
+│   │                     # generate_with_fallback() wraps Gemini in run_in_executor so it
+│   │                     # doesn't block the FastAPI event loop; fast-fails on 429 (~100ms)
+│   │                     # and SDK retries disabled via _NO_RETRY_HTTP_OPTIONS.
+│   │                     # MODELS = [GEMINI_MODEL env, then fallback chain] for resilience.
 │   ├── shopping.py       # Server-side Amazon synthesis only (no Playwright).
 │   │                     # synthesize_shopping_response() builds spoken response
 │   │                     # from browser_result data received from desktop client.
@@ -181,8 +185,11 @@ These are gitignored — every developer creates them manually:
 ## Environment Variables (.env)
 
 ```
-GEMINI_API_KEY=                    # aistudio.google.com/apikey
-GEMINI_MODEL=gemini-3.5-flash      # optional — primary Gemini model (default gemini-3.5-flash)
+GEMINI_API_KEY=                    # aistudio.google.com/apikey — used only when GOOGLE_GENAI_USE_VERTEXAI is not true
+GEMINI_MODEL=gemini-2.5-flash      # optional — primary Gemini model (default gemini-2.5-flash, the working model on Vertex us-central1)
+GOOGLE_GENAI_USE_VERTEXAI=true     # route Gemini calls through Vertex AI instead of the AI Studio Developer API
+GOOGLE_CLOUD_PROJECT=gdg-search-492804   # Vertex AI project ID
+GOOGLE_CLOUD_LOCATION=us-central1        # Vertex AI region
 DEEPGRAM_API_KEY=                  # console.deepgram.com
 GOOGLE_SEARCH_API_KEY=             # console.cloud.google.com → APIs → Custom Search
 GOOGLE_SEARCH_CX=                  # programmablesearchengine.google.com
@@ -315,7 +322,18 @@ Shopping and research browser automation now run on the **desktop client** (via 
 
 ### Redeploy command
 
+Vertex AI requires three new env vars and one IAM grant on the Cloud Run runtime
+service account (`348346331222-compute@developer.gserviceaccount.com`):
+
 ```powershell
+# One-time IAM grant so Cloud Run can call Vertex without an API key.
+gcloud projects add-iam-policy-binding gdg-search-492804 `
+  --member="serviceAccount:348346331222-compute@developer.gserviceaccount.com" `
+  --role="roles/aiplatform.user"
+
+# Deploy with Vertex env vars (GEMINI_API_KEY kept as backup for the AI Studio path).
+# Do NOT set GOOGLE_APPLICATION_CREDENTIALS on Cloud Run — the runtime service account
+# is auto-discovered via the metadata server, and setting that var would break Vertex ADC.
 gcloud run deploy opensight-backend `
   --source . `
   --platform managed `
@@ -324,7 +342,7 @@ gcloud run deploy opensight-backend `
   --min-instances 1 `
   --memory 1Gi `
   --timeout 300 `
-  --set-env-vars "GEMINI_API_KEY=xxx,DEEPGRAM_API_KEY=xxx,GOOGLE_SEARCH_API_KEY=xxx,GOOGLE_SEARCH_CX=xxx,SERPAPI_KEY=xxx,GOOGLE_TTS_CREDENTIALS_B64=xxx"
+  --set-env-vars "GOOGLE_GENAI_USE_VERTEXAI=true,GOOGLE_CLOUD_PROJECT=gdg-search-492804,GOOGLE_CLOUD_LOCATION=us-central1,GEMINI_MODEL=gemini-2.5-flash,GEMINI_API_KEY=xxx,DEEPGRAM_API_KEY=xxx,GOOGLE_SEARCH_API_KEY=xxx,GOOGLE_SEARCH_CX=xxx,SERPAPI_KEY=xxx,GOOGLE_TTS_CREDENTIALS_B64=xxx"
 ```
 
 ---
@@ -397,6 +415,8 @@ Shopping results must come back before the server can synthesize the response (i
 | Amazon scraping breaks if layout changes | Known — no fix yet | desktop_browser.py |
 | Cross-agent memory resets on Cloud Run (stateless) | Known — use local server for demo | server.py |
 | Calendar agent needs credentials.json + token.json | Not on Cloud Run yet | calendar.py |
+| `GOOGLE_APPLICATION_CREDENTIALS=credentials.json` in .env conflicts with Vertex ADC locally — the file is an OAuth client config (calendar reads it directly via `InstalledAppFlow.from_client_secrets_file('credentials.json', …)`, not via the env var), but ADC misreads it as a malformed service account. Unset the env var locally when using Vertex — calendar still works. On Cloud Run, do not set this var (the runtime service account is auto-discovered via the metadata server). | Known — see Troubleshooting | .env, calendar.py |
+| `gemini-3.5-flash` / `gemini-3.1-flash-lite` return 404 on Vertex us-central1 today | Known — kept in chain as forward-compat for when they GA in this region | router.py |
 | Win32 focus may fail on some machines | Known — HWND lookup by title not guaranteed | browser_manager.py, desktop_app.py |
 | elevenlabs in requirements.txt but not used in code | Stale dependency — safe to ignore | requirements.txt |
 
@@ -404,7 +424,9 @@ Shopping results must come back before the server can synthesize the response (i
 
 ## Fixes Already Applied (do not revert)
 
-- `router.py` — `generate_with_fallback` is async via `run_in_executor`. Research followup check moved above shopping followup check. `RESEARCH_EXPLICIT_PATTERN` guard added. Primary model now reads from `GEMINI_MODEL` env (default `gemini-3.5-flash`); MODELS chain is GA-only (`gemini-3.5-flash`, `gemini-3.1-flash-lite`, `gemini-2.5-flash`, `gemini-2.5-flash-lite`) — preview aliases and retired 2.0/1.5 IDs removed.
+- `router.py` — `generate_with_fallback` is async via `run_in_executor`. Research followup check moved above shopping followup check. `RESEARCH_EXPLICIT_PATTERN` guard added. Primary model reads from `GEMINI_MODEL` env (default `gemini-2.5-flash`); current chain order is `gemini-2.5-flash`, `gemini-2.5-flash-lite`, `gemini-3.5-flash`, `gemini-3.1-flash-lite` — the 3.x IDs are kept as forward-compat no-ops since they 404 on Vertex us-central1 today. Preview aliases and retired 2.0/1.5 IDs are gone.
+- `router.py` — Vertex AI migration. Added `_make_client()` helper as single source of truth: when `GOOGLE_GENAI_USE_VERTEXAI=true`, constructs `genai.Client(vertexai=True, project=GOOGLE_CLOUD_PROJECT, location=GOOGLE_CLOUD_LOCATION)`; otherwise falls back to `api_key=GEMINI_API_KEY` so the AI Studio path still works. Same google-genai SDK; only the backend changes. Eliminates the AI Studio 429 quota issue that was causing fallthroughs.
+- `router.py` — Quota-error fast-fail. `_NO_RETRY_HTTP_OPTIONS` (`HttpRetryOptions(attempts=1)`) disables the SDK's built-in tenacity backoff that was making 429s consume the full 15s timeout. `_is_quota_error()` detects `errors.ClientError` code 429 / status `RESOURCE_EXHAUSTED` and advances to the next model in ~100ms instead of ~15s. 15s outer timeout preserved for genuine slowness.
 - `calendar.py` — macOS Chrome path removed, replaced with Playwright. `strftime("%-I")` replaced with `.lstrip("0")`. Google API calls wrapped in `run_in_executor`. `close_active_browser()` stub added for server.py import compatibility.
 - `research.py` — `_is_followup` uses keyword matching instead of word count. "Open it" dead-end fixed. Mutable default arg fixed. Playwright removed — execution moved to `desktop_browser.py`. `search_scholar()` / `synthesize_research_response()` split for server+client protocol. `get_open_intent()` added for server.py. Paper deduplication by title added.
 - `shopping.py` — `get_event_loop()` replaced with `get_running_loop()`. Supplement skip list added. Playwright removed — execution moved to `desktop_browser.py`. `synthesize_shopping_response()` / `run_shopping_agent()` split for server+client protocol. `get_followup_product_url()` / `get_followup_product_title()` helpers added.
