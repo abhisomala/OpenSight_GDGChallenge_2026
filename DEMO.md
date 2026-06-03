@@ -1,5 +1,7 @@
 # OpenSight — Demo Script
 
+> Scope: this is the local run used to walk through and record the demo. Production distribution is the packaged Windows `.exe` against the Google Cloud backend (see the README). The steps below run the system locally for a clean, controlled demo.
+
 ## Before you start
 
 ```bash
