@@ -374,7 +374,7 @@ async def websocket_endpoint(ws: WebSocket):
                             papers, scholar_url, clean_query = await search_scholar(
                                 query, status_cb=_research_status
                             )
-                            result = synthesize_research_response(
+                            result = await synthesize_research_response(
                                 papers, clean_query, memory=_session_memory
                             )
                             if papers:
