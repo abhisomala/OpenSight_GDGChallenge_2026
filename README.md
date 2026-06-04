@@ -81,11 +81,11 @@ User speaks
 Deepgram Nova-2 STT -- real-time streaming speech to text
     |
     v
-Firebase Authentication + Firebase AI Logic
-    -- per-user identity and keyless model access (no API key in the client)
+Firebase Authentication -- per-user identity; the client carries a user token, never a model key
     |
     v
 OpenSight server on Google Cloud -- FastAPI WebSocket · SessionMemory · browser_manager
+    -- holds the Vertex AI service account; every model call happens server-side
     |
     v
 Gemini 2.5 Flash on Vertex AI -- intent classification · preference extraction
@@ -104,7 +104,7 @@ Google Cloud Text-to-Speech -- spoken response streamed back to user
 
 ### How it works
 
-**Secure, keyless access:** Firebase Authentication provides per-user identity, and Firebase AI Logic routes model requests so no API key is ever embedded in the client. This replaces the original single-embedded-key model with authenticated, per-user access.
+**Secure, keyless clients:** No client holds a model key. The desktop app and the Android client authenticate the user with Firebase Authentication and talk only to the OpenSight backend. The backend, on Google Cloud, holds the Vertex AI credentials as a server-side service account and makes every Gemini call itself. This replaces the original single-embedded-key model: the credential never leaves the server, and Firebase Authentication controls who can use the backend.
 
 **Production model serving:** Gemini 2.5 Flash runs on Vertex AI, Google's production AI platform, giving production-grade quota and scaling rather than a rate-limited developer key.
 
@@ -141,7 +141,7 @@ Three consistent feedback themes emerged: accent recognition accuracy (raised by
 
 We are working directly with organizations and leaders in the BVI space to validate the problem, shape the product around real user needs, and run structured trials with BVI participants.
 
-**Virginia Department for the Blind and Vision Impaired (DBVI):** We are working with the Regional Manager and the Director of Rehabilitation Technology Services to ground OpenSight in the real workflows and needs of the people the agency serves.
+**Virginia Department for the Blind and Vision Impaired (DBVI):** We are working with the Regional Manager and the Director of Rehabilitation Technology Services to ground OpenSight in the real workflows and needs of the people the agency serves. Their feedback directly informed planned low-vision support such as font scaling.
 
 **Blind Institute of Technology (BIT):** We are working with **Mike Hess, Founder and Executive Director**. Mike is a blind, 20-year IT industry veteran who founded BIT to place BVI professionals in Fortune 500 companies nationwide. BIT's accessibility work has been recognized with national awards and featured at **Google Cloud Next 2019** and Dreamforce 2019.
 
@@ -159,9 +159,9 @@ OpenSight is built around decisions that make it inherently extensible and ready
 
 **Multi-agent architecture:** Adding a new capability (email, file management, IDE control, music) is just adding a new agent file and a routing rule in `router.py`. The voice pipeline, memory system, and WebSocket server are fully decoupled from what agents do. The system currently has five agents. It could have fifty without touching the core.
 
-**Cloud-hosted and keyless:** The FastAPI backend is hosted on Google Cloud, and model access is keyless and authenticated through Firebase Authentication and Firebase AI Logic. This is a true multi-user foundation: there is no shared embedded key, and each user is identified and gated individually.
+**Cloud-hosted and keyless clients:** The FastAPI backend is hosted on Google Cloud and holds the Vertex AI credentials server-side. Clients carry no model key: they authenticate the user with Firebase Authentication and call the backend, which makes the model calls. This is a true multi-user foundation, with no shared embedded key and each user identified and gated individually.
 
-**Zero-friction distribution by design:** OpenSight ships as a standalone Windows executable. The end user downloads one `.exe`, double-clicks it, and says "OpenSight": no Python, no dependencies, no terminal, no API keys. This was an intentional scalability decision, not a convenience afterthought. The target user is a blind or visually impaired person, not a developer, so the distributed artifact has to behave like any ordinary consumer app. Everything heavy or sensitive (agent orchestration, model access, credentials) lives in the Google Cloud backend behind Firebase keyless authentication, and the client stays thin. Onboarding a new user is a single download with no per-user keys to provision and nothing to configure, so reaching more users is a distribution problem, not a setup problem. The executable is the distribution endpoint of a system architected from the start to scale.
+**Zero-friction distribution by design:** OpenSight ships as a standalone Windows executable. The end user downloads one `.exe`, double-clicks it, and says "OpenSight": no Python, no dependencies, no terminal, no API keys. This was an intentional scalability decision, not a convenience afterthought. The target user is a blind or visually impaired person, not a developer, so the distributed artifact has to behave like any ordinary consumer app. Everything heavy or sensitive (agent orchestration, model access, credentials) lives in the Google Cloud backend, and the client stays thin. Onboarding a new user is a single download with no per-user keys to provision and nothing to configure, so reaching more users is a distribution problem, not a setup problem. The executable is the distribution endpoint of a system architected from the start to scale.
 
 **Cross-platform reach (proof of concept):** A Flutter-based **Android client** has been built as a completed proof of concept. It is a thin, accessible, voice-first front door to the same Google Cloud backend, designed to be fully usable eyes-free with Android TalkBack. It was built phone-first on purpose: blind and visually impaired users rely overwhelmingly on phones with built-in screen readers, so the phone is the real distribution surface. iOS was intentionally excluded from this phase. The platform's permission model places inherent constraints on the always-listening microphone access and cross-application control that are central to OpenSight's design, whereas Android's more open model fits a voice-first, always-available assistant.
 
@@ -171,6 +171,7 @@ The always-on wake word loop means OpenSight already functions as a background a
 
 - Full OS-level control: IDE navigation, file management, email
 - Cross-application memory: preferences and context that survive across sessions
+- Low-vision support: font scaling and screen magnification alongside the voice-first flow
 - Harden the Android proof of concept into a full release on the same agent backend
 - Braille display output: parallel text channel alongside voice
 - Expanded structured trials with BVI participants through our DBVI and BIT partnerships
@@ -182,11 +183,10 @@ The always-on wake word loop means OpenSight already functions as a background a
 | Technology | How OpenSight uses it |
 |---|---|
 | **Gemini 2.5 Flash** | Intent routing on every utterance, response synthesis, preference extraction, cross-agent reasoning, follow-up detection |
-| **Vertex AI** | Production serving for Gemini 2.5 Flash: production-grade quota, control, and scaling |
-| **Firebase Authentication** | Per-user identity, replacing the single-embedded-key model |
-| **Firebase AI Logic** | Keyless model access, so no API key is embedded in the client; access gated by user credentials |
+| **Vertex AI** | Production serving for Gemini 2.5 Flash, called server-side via a service account: production-grade quota, control, and scaling |
+| **Firebase Authentication** | Per-user identity, replacing the single-embedded-key model and gating who can use the backend |
 | **Google Cloud Text-to-Speech** | Spoken responses streamed back to the user |
-| **Google Cloud** | Hosting for the FastAPI backend |
+| **Google Cloud** | Hosting for the FastAPI backend, which holds all model credentials |
 | **Google Custom Search API** | Powers the General agent for web search on any query that does not require Amazon, Scholar, or Calendar |
 | **Google Calendar API** | The Calendar agent reads and creates events via OAuth |
 | **Google Scholar** (via SerpAPI) | Academic paper search for the Research agent, with automatic product keyword extraction for cross-agent handoff |
@@ -214,8 +214,7 @@ Independence is directly correlated with mental health outcomes for people with 
 | Layer | Technology |
 |---|---|
 | Voice input | Deepgram Nova-2 real-time STT |
-| LLM | Gemini 2.5 Flash on Vertex AI |
-| Model access | Firebase AI Logic (keyless routing) |
+| LLM | Gemini 2.5 Flash on Vertex AI (called server-side via a service account) |
 | Authentication | Firebase Authentication (per-user) |
 | Agent orchestration | Python (custom multi-agent loop) |
 | Browser automation | Playwright (Chromium) |
