@@ -20,3 +20,4 @@ OpenSight-debug.spec
 
 run_tests.py
 test_hint.py
+test_auth.py

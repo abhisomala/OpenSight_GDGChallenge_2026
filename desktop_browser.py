@@ -71,6 +71,14 @@ def _scrape_product_details(page) -> dict:
 def _clean_query(query: str) -> str:
     cleaned = re.sub(r'\s*(on amazon|from amazon|at amazon|amazon)\s*', ' ', query, flags=re.IGNORECASE)
     cleaned = re.sub(r'\s*\[context:[^\]]*\]', '', cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(
+        r'\b(?:for\s+)?(?:under|less\s+than|below|cheaper\s+than|no\s+more\s+than|at\s+most|up\s+to)\s+\$?\d+(?:\.\d+)?\b'
+        r'|(?<!\w)\$?\d+(?:\.\d+)?\s+or\s+(?:less|under)\b',
+        '',
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r'  +', ' ', cleaned)
     return cleaned.strip()
 
 
