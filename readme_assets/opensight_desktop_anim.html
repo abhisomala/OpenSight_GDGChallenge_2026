@@ -1,0 +1,564 @@
+<!DOCTYPE html>
+<!--
+  ============================================================================
+  OpenSight — Desktop demo loop (README header animation)
+  ============================================================================
+
+  WHAT THIS IS
+    A faithful, animated reproduction of the REAL OpenSight desktop window
+    (matched to readme_assets/reference_app.png and to the actual renderer in
+    ui/ui_draw.py + ui/ui_theme.py + desktop_app.py), driven through the real
+    chained cross-agent demo. App-as-hero: ONLY the OpenSight window — no browser
+    window. Brand piece — IP-clean: no third-party UI, logos, brand names, domains.
+
+  HOW TO OPEN
+    Double-click. Runs fully OFFLINE — no build, no npm, no CDN. Fonts
+    (Inter + JetBrains Mono) and the app icon load from ./ via @font-face / <img>,
+    so it renders on-brand on any machine.
+
+  LOOP LENGTH
+    18.0 seconds (see the LOOP timeline constant in the <script>). The first
+    frame equals the last frame (both = the idle screenshot), so it loops cleanly.
+
+  EXACT REGION TO RECORD
+    Record the app window only: 1100 x 730 px (.appwin = real 1100x700 interior +
+    30px titlebar), centered on a slightly darker page so its edge is croppable.
+    View at 100% zoom (Ctrl/Cmd+0). Capture one full 18.0s cycle.
+    Tip: export MP4 (drag into the GitHub README editor), not a heavy GIF.
+
+  WHAT TO EDIT (top of the <script> block)
+    LOOP   — phase timings (idle/research/shopping/openFirst/ingredients/reset).
+    COPY   — queries + responses.
+    Theme colors + agent palettes are CSS variables / classes mirrored from
+    ui/ui_theme.py (search ":root" and ".card.<agent>").
+  ============================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>OpenSight — Desktop Demo Loop</title>
+<style>
+  /* ── Real project fonts, embedded from ./fonts (offline) ───────────────── */
+  @font-face{ font-family:"Inter"; font-weight:400; src:url("fonts/Inter-Regular.ttf") format("truetype"); font-display:block; }
+  @font-face{ font-family:"Inter"; font-weight:500; src:url("fonts/Inter-Medium.ttf") format("truetype"); font-display:block; }
+  @font-face{ font-family:"Inter"; font-weight:700; src:url("fonts/Inter-Bold.ttf") format("truetype"); font-display:block; }
+  @font-face{ font-family:"JetBrains Mono"; font-weight:400; src:url("fonts/JetBrainsMono-Regular.ttf") format("truetype"); font-display:block; }
+  @font-face{ font-family:"JetBrains Mono"; font-weight:500; src:url("fonts/JetBrainsMono-Medium.ttf") format("truetype"); font-display:block; }
+  @font-face{ font-family:"JetBrains Mono"; font-weight:700; src:url("fonts/JetBrainsMono-Bold.ttf") format("truetype"); font-display:block; }
+
+  /* ── Theme tokens — copied from ui/ui_theme.py (dark) ──────────────────── */
+  :root{
+    --page:#06101a;
+    --bg:#0b1826; --rail:#111f2e; --rail-border:#1e3347;
+    --t1:#EAF2FF; --t2:#A8BED4; --muted:#9FB3C8; --meta:#5C728A;
+    --main-text:#DCE7F3; --main-muted:#A8BED4;
+    --accent:#6bb3d9; --accent-bright:#e5f8ff;
+    --panel:#0f1e2d; --panel-border:#1e3347;
+    --wordmark:#D0DCEC;                 /* lerp(wordmark,muted,.35) */
+    --win-border:#2a5a7a;
+    --dot:#1e3a5c;
+    /* tabs */
+    --tab-on-bg:#1e3a52; --tab-on-bd:#2e5470; --tab-on-tx:#EAF2FF;
+    --tab-off-bg:#162a3a; --tab-off-bd:#1e3347; --tab-off-tx:#6B8299;
+    /* reasoning */
+    --r-panel:#0f1e2d; --r-edge:#2b4a5e; --r-title:#9FB3C8; --r-sub:#5C728A;
+    --r-active:#6bb3d9; --r-complete:#56b97a; --r-pending:#61869b;
+    --r-connector:#1f3447; --r-row-text:#DCE7F3; --r-row-sub:#6B8299;
+    /* fonts (Tk point sizes → px ≈ ×1.333) */
+    --mono:"JetBrains Mono","SF Mono",monospace;
+    --sans:"Inter","Helvetica Neue",Arial,sans-serif;
+    --ease:cubic-bezier(.22,1,.36,1);
+  }
+
+  *{ box-sizing:border-box; margin:0; padding:0; }
+  html,body{ height:100%; }
+  body{ background:var(--page); font-family:var(--sans);
+    display:flex; align-items:center; justify-content:center; overflow:hidden;
+    -webkit-font-smoothing:antialiased; }
+
+  /* ════════════════ SCENE (recordable region = the app window only) ═══════ */
+  .scene{ position:relative; width:1140px; height:770px; background:var(--page);
+    display:flex; align-items:center; justify-content:center; overflow:hidden; }
+
+  /* ════════════════ APP WINDOW (the hero) ════════════════════════════════ */
+  .appwin{ position:relative; width:1100px; height:730px;
+    border-radius:8px 8px 0 0; overflow:hidden;
+    box-shadow:0 30px 80px rgba(0,0,0,.5); }
+
+  /* Windows-style dark titlebar */
+  .titlebar{ height:30px; background:#0a131d; display:flex; align-items:center;
+    padding:0 6px 0 10px; gap:8px; border-bottom:1px solid #07101a; }
+  .titlebar .ticon{ width:15px; height:15px; border-radius:3px; }
+  .titlebar .ttitle{ font-family:var(--sans); font-size:12px; color:#c4d3e0; }
+  .titlebar .spacer{ flex:1; }
+  .titlebar .wbtns{ display:flex; }
+  .titlebar .wbtn{ width:40px; height:30px; display:flex; align-items:center;
+    justify-content:center; color:#aab9c6; }
+  .titlebar .wbtn svg{ width:11px; height:11px; stroke:currentColor; fill:none; stroke-width:1.4; }
+  .titlebar .wbtn.close{ color:#cdd9e3; }
+
+  /* app interior = the real 1100x700 canvas, 2px window border */
+  .interior{ position:relative; width:1100px; height:700px; background:var(--bg);
+    border:2px solid var(--win-border); }
+  .interior::after{ content:""; position:absolute; inset:1px; border:1px solid var(--win-border);
+    pointer-events:none; }
+
+  /* dot-grid pattern over the main (non-rail) area */
+  .maindots{ position:absolute; left:0; top:0; width:814px; height:100%;
+    background-image:radial-gradient(var(--dot) 1.1px, transparent 1.2px);
+    background-size:28px 28px; background-position:14px 14px; }
+
+  /* faint own-log "bleed" texture (the 95%-opaque window over the IDE);
+     TERMINAL/PORTS appear only here as bleed, never as real UI */
+  .bleed{ position:absolute; left:0; top:0; width:814px; height:100%;
+    font-family:var(--mono); font-size:11px; line-height:30px; color:#9fc7b0;
+    opacity:.05; white-space:pre; pointer-events:none; padding:34px 0 0 8px; }
+  .bleed .ppanel{ position:absolute; left:8px; bottom:6px; letter-spacing:2px; }
+
+  /* ── brand (logo + wordmark + tagline) ── */
+  .brand{ position:absolute; left:24px; top:18px; }
+  .brand img{ position:absolute; left:0; top:0; width:36px; height:36px; border-radius:9px; }
+  .brand .word{ position:absolute; left:46px; top:0; font-size:24px; font-weight:700;
+    color:var(--wordmark); white-space:nowrap; }
+  .brand .tag{ position:absolute; left:46px; top:34px; font-family:var(--mono);
+    font-size:13px; color:var(--meta); white-space:nowrap; }
+
+  /* ── transcript zone (computed coords from ui_draw.redraw) ── */
+  .you-label{ position:absolute; left:163px; top:204px; font-size:13px; font-weight:700;
+    color:var(--muted); }
+  .you-text{ position:absolute; left:163px; top:215px; width:488px; text-align:center;
+    font-size:19px; line-height:1.45; color:var(--main-muted); }
+  .you-text.spoken{ color:var(--main-text); }
+
+  .divider{ position:absolute; left:247px; top:324px; width:320px; height:0;
+    border-top:1px dashed var(--accent); }
+
+  .respcard{ position:absolute; left:35px; top:350px; width:744px; height:165px;
+    border-radius:14px; background:#0d1b29; border:1px solid #16283a; }
+  .resp-label{ position:absolute; left:49px; top:350px; font-size:13px; font-weight:700;
+    color:var(--muted); }
+  .resp-text{ position:absolute; left:49px; top:386px; width:716px; font-size:19px;
+    line-height:1.45; color:var(--main-text); }
+  .resp-text.placeholder{ left:49px; width:716px; text-align:center; color:var(--main-muted); }
+  .resp-cue{ position:absolute; left:49px; top:486px; display:inline-flex; align-items:center;
+    gap:7px; font-family:var(--mono); font-size:12px; color:var(--accent);
+    opacity:0; transform:translateY(5px); transition:opacity .4s var(--ease), transform .4s var(--ease); }
+  .resp-cue.show{ opacity:1; transform:none; }
+
+  /* ── orb (mic) ── */
+  .orb-label{ position:absolute; left:407px; top:540px; transform:translateX(-50%);
+    font-family:var(--mono); font-size:13px; font-weight:700; color:var(--muted);
+    letter-spacing:.5px; }
+  .orb{ position:absolute; left:407px; top:610px; transform:translate(-50%,-50%); }
+  .orb .ring{ position:absolute; left:50%; top:50%; width:96px; height:96px;
+    margin:-48px 0 0 -48px; border-radius:50%; background:var(--orb-ring,#1a3a52);
+    transition:background .5s var(--ease); }
+  .orb .core{ position:absolute; left:50%; top:50%; width:80px; height:80px;
+    margin:-40px 0 0 -40px; border-radius:50%; background:var(--orb-core,#88cbe8);
+    transition:background .5s var(--ease); display:flex; align-items:center; justify-content:center; }
+  .orb .micglyph{ width:34px; height:40px; color:var(--mic,#356985); transition:color .4s; }
+  .orb .micglyph svg{ width:34px; height:40px; stroke:currentColor; }
+
+  .waveform{ position:absolute; left:407px; top:666px; transform:translateX(-50%);
+    display:flex; align-items:center; gap:7px; height:28px; opacity:0; transition:opacity .3s; }
+  .waveform.on{ opacity:1; }
+  .waveform span{ width:8px; height:8px; border-radius:4px;
+    background:linear-gradient(180deg,#8fd7ff,#2f7fb0); animation:wv 1s var(--ease) infinite; }
+  .waveform span:nth-child(1){ animation-delay:0s }
+  .waveform span:nth-child(2){ animation-delay:.1s }
+  .waveform span:nth-child(3){ animation-delay:.2s }
+  .waveform span:nth-child(4){ animation-delay:.3s }
+  .waveform span:nth-child(5){ animation-delay:.4s }
+  @keyframes wv{ 0%,100%{ transform:scaleY(.5) } 50%{ transform:scaleY(3.2) } }
+
+  .powered{ position:absolute; left:407px; top:682px; transform:translateX(-50%);
+    font-family:var(--mono); font-size:13px; color:var(--meta); white-space:nowrap; }
+
+  /* ════════════════ RIGHT RAIL ═══════════════════════════════════════════ */
+  .rail{ position:absolute; right:0; top:0; width:286px; height:100%;
+    background:var(--rail); border-left:2px solid var(--rail-border); }
+
+  .rtabs{ position:absolute; left:14px; top:12px; display:flex; gap:4px; }
+  .rtab{ width:83px; height:28px; border-radius:10px; display:flex; align-items:center;
+    justify-content:center; font-size:13px; font-weight:700;
+    background:var(--tab-off-bg); border:1px solid var(--tab-off-bd); color:var(--tab-off-tx); }
+  .rtab.on{ background:var(--tab-on-bg); border-color:var(--tab-on-bd); color:var(--tab-on-tx); }
+
+  .rhead{ position:absolute; left:0; right:0; top:50px; text-align:center; font-size:13px;
+    font-weight:700; letter-spacing:1px; color:var(--accent); }
+
+  /* agent cards (absolute tops match ui_draw card layout) */
+  .card{ position:absolute; left:14px; width:258px; height:46px; border-radius:10px;
+    background:var(--c-fill); border:1px solid var(--c-out);
+    transition:background .4s var(--ease), border-color .4s var(--ease); }
+  .card .abar{ position:absolute; left:0; top:7px; bottom:7px; width:4px;
+    background:var(--c-acc); }
+  .card .cdot{ position:absolute; left:14px; top:50%; width:10px; height:10px; margin-top:-5px;
+    border-radius:50%; background:var(--c-acc); }
+  .card .cdot::after{ content:""; position:absolute; left:50%; top:50%; width:4px; height:4px;
+    margin:-2px 0 0 -2px; border-radius:50%; background:#fff; opacity:0; transition:opacity .3s; }
+  .card .cname{ position:absolute; left:34px; top:7px; font-family:var(--mono); font-size:13px;
+    font-weight:700; color:var(--c-title); }
+  .card .cdet{ position:absolute; left:34px; top:24px; font-family:var(--mono); font-size:12px;
+    color:var(--c-det); }
+  .card .cdet.up{ display:none; }
+  .card .cactive{ position:absolute; right:5px; top:5px; height:17px; padding:0 7px;
+    border-radius:5px; display:none; align-items:center; font-family:var(--mono); font-size:11px;
+    color:var(--c-acc); border:1px solid var(--c-acc);
+    background:color-mix(in srgb, var(--c-acc) 18%, transparent); }
+  .card .glow{ position:absolute; inset:-7px; border-radius:17px; background:var(--c-glow);
+    opacity:0; transition:opacity .4s var(--ease); z-index:-1; }
+
+  /* active state: switch to active palette + show ACTIVE pill + glow */
+  .card.active{ background:var(--c-fill-a); border-color:var(--c-out-a); }
+  .card.active .glow{ opacity:1; }
+  .card.active .cdot{ width:12px; height:12px; margin-top:-6px; box-shadow:0 0 10px var(--c-acc); }
+  .card.active .cdot::after{ opacity:1; }
+  .card.active .cname{ color:var(--c-title-a); }
+  .card.active .cdet{ display:none; }
+  .card.active .cdet.up{ display:block; color:var(--c-acc); }
+  .card.active .cactive{ display:inline-flex; }
+
+  /* per-agent palettes (inactive + active) from ui_theme._agent_card_colors */
+  .card.brain{ top:90px;  --c-fill:#162c3e; --c-out:#2d4b64; --c-title:#86adc7; --c-det:#6f8a9f; --c-acc:#7fb7de;
+               --c-fill-a:#1b394f; --c-out-a:#2f5574; --c-title-a:#8eb9d4; --c-glow:#0a1e3a; }
+  .card.shopping{ top:144px; --c-fill:#162f24; --c-out:#2a503d; --c-title:#92c4aa; --c-det:#759788; --c-acc:#89cfa6;
+               --c-fill-a:#1b3c2c; --c-out-a:#2d5a43; --c-title-a:#9bcfb4; --c-glow:#0a1e12; }
+  .card.calendar{ top:198px; --c-fill:#352b18; --c-out:#5f4f2e; --c-title:#ccb57f; --c-det:#a7936a; --c-acc:#d8b471;
+               --c-fill-a:#42361d; --c-out-a:#6a5732; --c-title-a:#d8bf89; --c-glow:#1e1400; }
+  .card.research{ top:252px; --c-fill:#27203f; --c-out:#483d68; --c-title:#ad9fd1; --c-det:#8f83b2; --c-acc:#a993dd;
+               --c-fill-a:#2f2649; --c-out-a:#4f4272; --c-title-a:#b7a8da; --c-glow:#120a28; }
+  .card.general{ top:306px; --c-fill:#1c2f3d; --c-out:#34556a; --c-title:#94bbcf; --c-det:#7897a9; --c-acc:#8cb9ce;
+               --c-fill-a:#23394a; --c-out-a:#395a6f; --c-title-a:#9dc3d6; --c-glow:#0a1420; }
+
+  /* reasoning panel */
+  .rpanel{ position:absolute; left:14px; top:382px; width:258px; height:290px;
+    border-radius:14px; background:var(--r-panel); border:1px solid var(--r-edge); }
+  .rpanel .rtitle{ position:absolute; left:12px; top:10px; font-size:13px; font-weight:700;
+    letter-spacing:.5px; color:var(--r-title); }
+  .rpanel .rcount{ position:absolute; right:10px; top:10px; font-family:var(--mono); font-size:12px;
+    color:var(--r-sub); }
+  .rpanel .rcount.lit{ color:var(--r-active); }
+  .rpanel .rdiv{ position:absolute; left:10px; right:10px; top:32px; height:0;
+    border-top:1px solid var(--r-connector); }
+  .rrail{ position:absolute; left:22px; top:50px; width:2px; height:208px; background:var(--r-connector); }
+  .rfill{ position:absolute; left:21px; top:50px; width:4px; height:0; background:var(--r-active);
+    transition:height .5s var(--ease); }
+
+  .rstep{ position:absolute; left:10px; width:238px; height:34px; }  /* top set inline per step */
+  .rstep .rnode{ position:absolute; left:4px; top:7px; width:16px; height:16px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--r-panel); border:2px solid var(--r-pending);
+    font-family:var(--mono); font-size:10px; color:var(--r-pending); }
+  .rstep .rnode .glowring{ position:absolute; inset:-5px; border-radius:50%; border:2px solid var(--r-active);
+    opacity:0; }
+  .rstep .rlabel{ position:absolute; left:32px; top:2px; font-size:13px; font-weight:700;
+    color:var(--r-row-sub); }
+  .rstep .rsum{ position:absolute; left:32px; top:19px; font-size:12px; color:var(--r-row-sub);
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis; width:198px; }
+
+  .rstep.active .rnode{ background:var(--r-active); border-color:var(--r-active); color:transparent; }
+  .rstep.active .rnode .glowring{ opacity:1; animation:rpulse 1.4s ease-in-out infinite; }
+  .rstep.active .rnode .num{ opacity:0; }
+  .rstep.active .rnode::after{ content:""; position:absolute; left:50%; top:50%; width:6px; height:6px;
+    margin:-3px 0 0 -3px; border-radius:50%; background:#fff; }
+  .rstep.active .rlabel{ color:var(--r-active); }
+  .rstep.active .rsum{ color:color-mix(in srgb,var(--r-row-sub) 60%, var(--r-active)); }
+  @keyframes rpulse{ 0%,100%{ transform:scale(1); opacity:1 } 50%{ transform:scale(1.25); opacity:.5 } }
+
+  .rstep.done .rnode{ background:var(--r-complete); border-color:var(--r-complete); color:#fff; }
+  .rstep.done .rnode .num{ opacity:0 }
+  .rstep.done .rnode::after{ content:"✓"; font-family:var(--mono); font-size:11px; color:#fff; }
+  .rstep.done .rlabel{ color:var(--r-row-text); }
+
+  .version{ position:absolute; left:0; right:0; top:684px; text-align:center;
+    font-family:var(--mono); font-size:12px; color:var(--meta); }
+  .rail .version{ left:14px; right:14px; }
+
+  /* (browser window removed — app-as-hero only) */
+</style>
+</head>
+<body>
+  <div class="scene">
+
+    <!-- ═══════════ OpenSight APP WINDOW ═══════════ -->
+    <div class="appwin">
+      <div class="titlebar">
+        <img class="ticon" src="opensight_icon.png" alt="">
+        <span class="ttitle">OpenSight</span>
+        <span class="spacer"></span>
+        <span class="wbtns">
+          <span class="wbtn"><svg viewBox="0 0 24 24"><path d="M5 12h14"/></svg></span>
+          <span class="wbtn"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14"/></svg></span>
+          <span class="wbtn close"><svg viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></svg></span>
+        </span>
+      </div>
+
+      <div class="interior">
+        <div class="maindots"></div>
+        <!-- faint own-log bleed (the IDE behind the 95%-opaque window) -->
+        <div class="bleed">[fonts] registered 6 project fonts (Inter + JetBrains Mono)
+[ws] connecting ws://127.0.0.1:8080/ws
+[ws] connected — session ready
+[audio] Deepgram Nova-2 stream open · endpointing=3000ms
+[wake] listening for "OpenSight" · endpointing=300ms
+uvicorn running on http://127.0.0.1:8080 (Press CTRL+C to quit)
+INFO: 127.0.0.1 - "GET /ws" 101 Switching Protocols
+[router] plan_intent → awaiting query
+[tts] Google Cloud TTS ready (en-US-Journey-F)
+C:\Users\...\OpenSight\GDG2> python run_local.py<span class="ppanel">TERMINAL    PORTS</span></div>
+
+        <!-- brand -->
+        <div class="brand">
+          <img src="opensight_icon.png" alt="">
+          <div class="word">OpenSight</div>
+          <div class="tag">Technology that Adapts to You</div>
+        </div>
+
+        <!-- transcript: YOU -->
+        <div class="you-label">YOU</div>
+        <div class="you-text" id="youText">Speak and your words will appear here...</div>
+        <div class="divider"></div>
+
+        <!-- transcript: OPENSIGHT response card -->
+        <div class="respcard"></div>
+        <div class="resp-label">OPENSIGHT</div>
+        <div class="resp-text placeholder" id="respText">Response will appear here...</div>
+        <div class="resp-cue" id="respCue"></div>
+
+        <!-- orb -->
+        <div class="orb-label" id="orbLabel">IDLE</div>
+        <div class="orb" id="orb">
+          <div class="ring"></div>
+          <div class="core">
+            <span class="micglyph"><svg viewBox="0 0 24 24" fill="none">
+              <rect x="9" y="3" width="6" height="11" rx="3" fill="currentColor"/>
+              <path d="M6 11a6 6 0 0012 0" stroke="currentColor" stroke-width="2"/>
+              <line x1="12" y1="17" x2="12" y2="21" stroke="currentColor" stroke-width="2"/>
+              <line x1="8" y1="21" x2="16" y2="21" stroke="currentColor" stroke-width="2"/>
+            </svg></span>
+          </div>
+        </div>
+        <div class="waveform" id="waveform"><span></span><span></span><span></span><span></span><span></span></div>
+        <div class="powered">Gemini  ·  Deepgram  ·  Google TTS</div>
+
+        <!-- ── right rail ── -->
+        <div class="rail">
+          <div class="rtabs">
+            <div class="rtab on">Agents</div>
+            <div class="rtab">Settings</div>
+            <div class="rtab">Context</div>
+          </div>
+          <div class="rhead">BRAIN / AGENTS</div>
+
+          <div class="card brain" id="card-BRAIN"><div class="glow"></div><div class="abar"></div><div class="cdot"></div><div class="cname">BRAIN</div><div class="cdet">routing requests</div><div class="cdet up">ROUTING REQUESTS</div><div class="cactive">ACTIVE ↗</div></div>
+          <div class="card shopping" id="card-SHOPPING"><div class="glow"></div><div class="abar"></div><div class="cdot"></div><div class="cname">SHOPPING</div><div class="cdet">scanning options</div><div class="cdet up">SCANNING OPTIONS</div><div class="cactive">ACTIVE ↗</div></div>
+          <div class="card calendar" id="card-CALENDAR"><div class="glow"></div><div class="abar"></div><div class="cdot"></div><div class="cname">CALENDAR</div><div class="cdet">checking schedules</div><div class="cdet up">CHECKING SCHEDULES</div><div class="cactive">ACTIVE ↗</div></div>
+          <div class="card research" id="card-RESEARCH"><div class="glow"></div><div class="abar"></div><div class="cdot"></div><div class="cname">RESEARCH</div><div class="cdet">pulling sources</div><div class="cdet up">PULLING SOURCES</div><div class="cactive">ACTIVE ↗</div></div>
+          <div class="card general" id="card-GENERAL"><div class="glow"></div><div class="abar"></div><div class="cdot"></div><div class="cname">GENERAL</div><div class="cdet">composing responses</div><div class="cdet up">COMPOSING RESPONSES</div><div class="cactive">ACTIVE ↗</div></div>
+
+          <!-- reasoning flow -->
+          <div class="rpanel">
+            <div class="rtitle">REASONING FLOW</div>
+            <div class="rcount" id="rcount">0 / 5</div>
+            <div class="rdiv"></div>
+            <div class="rrail"></div>
+            <div class="rfill" id="rfill"></div>
+            <div class="rstep" id="rs1" style="top:35px"><div class="rnode"><span class="num">1</span><span class="glowring"></span></div><div class="rlabel">Classify intent</div><div class="rsum">Waiting for request</div></div>
+            <div class="rstep" id="rs2" style="top:87px"><div class="rnode"><span class="num">2</span><span class="glowring"></span></div><div class="rlabel">Extract constraints</div><div class="rsum">Waiting for request</div></div>
+            <div class="rstep" id="rs3" style="top:139px"><div class="rnode"><span class="num">3</span><span class="glowring"></span></div><div class="rlabel">Route to agent</div><div class="rsum">Waiting for request</div></div>
+            <div class="rstep" id="rs4" style="top:191px"><div class="rnode"><span class="num">4</span><span class="glowring"></span></div><div class="rlabel">Execute task</div><div class="rsum">Waiting for request</div></div>
+            <div class="rstep" id="rs5" style="top:243px"><div class="rnode"><span class="num">5</span><span class="glowring"></span></div><div class="rlabel">Generate response</div><div class="rsum">Waiting for request</div></div>
+          </div>
+
+          <div class="version">OpenSight v1.0</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+
+<script>
+/* ════════════════════════════════════════════════════════════════════════
+   EDIT THESE TWO BLOCKS TO RETUNE THE LOOP
+   ════════════════════════════════════════════════════════════════════════ */
+
+/* Phase timings (ms). Total = 18000ms = 18.0s. Generous holds so each typed
+   response reads comfortably (the final answer holds longest). */
+const LOOP = {
+  idle:        1700,
+  research:    4300,
+  shopping:    4500,
+  openFirst:   2500,
+  ingredients: 4500,
+  reset:        500,
+};
+
+/* On-screen copy. Brand-free placeholders — queries + spoken responses only. */
+const COPY = {
+  queries: {
+    research:    "Find me research on omega-3 and brain health",
+    shopping:    "Can you find me a supplement for that under $30",
+    open:        "Open the first one",
+    ingredients: "What are the ingredients",
+  },
+  responses: {
+    research:    'Got two papers. First is “Omega-3 fatty acids and cognitive function,” and second is “DHA supplementation and memory in adults.” Want to know more about either?',
+    shopping:    "Got three options. Omega-3 Fish Oil 120 softgels at 18.99, Triple-Strength Omega-3 at 24.50, or Wild Fish Oil + Vitamin D at 27.95. Which one?",
+    open:        "Opening the first one and reading the page…",
+    ingredients: "Fish oil concentrate, EPA, DHA, gelatin, glycerin, and vitamin E.",
+  },
+};
+
+/* Orb colors per active agent — from ui_theme._orb_color_for_agent (dark). */
+const ORB = {
+  IDLE:     { ring:"#1a3a52", core:"#88cbe8" },
+  RESEARCH: { ring:"#1a0d38", core:"#9a7ad6" },
+  SHOPPING: { ring:"#1a4a28", core:"#6ab88a" },
+  GENERAL:  { ring:"#0d1e2e", core:"#7aaabb" },
+};
+/* Thinking labels per agent — from ui_theme._orb_label. */
+const THINK_LABEL = { RESEARCH:"RESEARCHING", SHOPPING:"SHOPPING", GENERAL:"THINKING" };
+
+const TYPE_SPEED = 16;
+
+/* ════════════════════════════════════════════════════════════════════════
+   ENGINE
+   ════════════════════════════════════════════════════════════════════════ */
+const $ = id => document.getElementById(id);
+const timers = [];
+const after = (ms, fn) => timers.push(setTimeout(fn, ms));
+const clearTimers = () => { timers.forEach(clearTimeout); timers.length = 0; };
+
+/* ── app-window helpers ── */
+function setOrb(key){
+  $("orb").style.setProperty("--orb-ring", ORB[key].ring);
+  $("orb").style.setProperty("--orb-core", ORB[key].core);
+}
+function setOrbLabel(t){ $("orbLabel").textContent = t; }
+function setMicListening(on){ $("orb").style.setProperty("--mic", on ? "#245972" : "#356985"); }
+function setActiveAgent(name){
+  ["BRAIN","SHOPPING","CALENDAR","RESEARCH","GENERAL"].forEach(a=>
+    $("card-"+a).classList.toggle("active", a===name));
+}
+function setYou(text, spoken){
+  $("youText").textContent = text;
+  $("youText").classList.toggle("spoken", !!spoken);
+}
+
+/* reasoning steps */
+const RSUM = {
+  1:{a:"Classifying user intent",   d:"Intent identified"},
+  2:{a:"Extracting user constraints",d:"Constraints extracted"},
+  3:{a:"Selecting specialist agent", d:"Routed to agent"},
+  4:{a:"Executing task with agent",  d:"Task executed"},
+  5:{a:"Composing spoken response",  d:"Response generated"},
+};
+const RFILL_Y = {0:0,1:0,2:52,3:104,4:156,5:208};  // node spacing 52
+function setStep(n, state){
+  const el = $("rs"+n); el.classList.remove("active","done");
+  if(state) el.classList.add(state);
+  const sum = el.querySelector(".rsum");
+  if(state==="active") sum.textContent = RSUM[n].a;
+  else if(state==="done") sum.textContent = RSUM[n].d;
+  else sum.textContent = "Waiting for request";
+}
+function setCounter(done){
+  $("rcount").textContent = done + " / 5";
+  $("rcount").classList.toggle("lit", done>0);
+  $("rfill").style.height = RFILL_Y[done] + "px";
+}
+/* activate step n, then mark it done after `hold` ms; updates counter */
+function runStep(n, hold, doneCount){
+  setStep(n,"active");
+  after(hold, ()=>{ setStep(n,"done"); setCounter(doneCount); });
+}
+
+/* response typewriter */
+function type(elId, text, speed, done){
+  const el = $(elId); el.classList.remove("placeholder"); el.textContent = "";
+  let i = 0;
+  (function step(){ el.textContent = text.slice(0,i);
+    if(i++ < text.length) after(speed, step); else if(done) done(); })();
+}
+
+/* ── idle (first frame == last frame: matches the screenshot exactly) ── */
+function setIdle(){
+  setActiveAgent(null);
+  setOrb("IDLE"); setOrbLabel("IDLE"); setMicListening(false);
+  $("waveform").classList.remove("on");
+  setYou("Speak and your words will appear here...", false);
+  $("respText").className = "resp-text placeholder"; $("respText").textContent = "Response will appear here...";
+  $("respCue").className = "resp-cue";
+  for(let n=1;n<=5;n++) setStep(n,null); setCounter(0);
+}
+
+/* clear the response card to its empty (typing-ready) state */
+function clearResp(){ $("respText").className="resp-text placeholder"; $("respText").textContent=""; }
+
+/* ── BEAT 1: RESEARCH ── */
+function beatResearch(){
+  setYou(COPY.queries.research, true);
+  setOrbLabel("LISTENING"); setMicListening(true);
+  // classify + extract while "listening → processing"
+  runStep(1, 350, 1);
+  after(420, ()=>{ setMicListening(false); setOrb("RESEARCH"); setOrbLabel(THINK_LABEL.RESEARCH);
+    setActiveAgent("RESEARCH"); });
+  after(520, ()=> runStep(2, 350, 2));
+  // speak the research response
+  after(1100, ()=>{ setOrbLabel("SPEAKING"); $("waveform").classList.add("on");
+    type("respText", COPY.responses.research, TYPE_SPEED); });
+}
+
+/* ── BEAT 2: SHOPPING (cross-agent memory) ── */
+function beatShopping(){
+  setYou(COPY.queries.shopping, true);
+  setOrbLabel("LISTENING"); setMicListening(true); $("waveform").classList.remove("on"); clearResp();
+  after(380, ()=>{ setMicListening(false); setOrb("SHOPPING"); setOrbLabel(THINK_LABEL.SHOPPING);
+    setActiveAgent("SHOPPING"); });
+  runStep(3, 450, 3);
+  after(1500,()=>{ setOrbLabel("SPEAKING"); $("waveform").classList.add("on");
+    type("respText", COPY.responses.shopping, TYPE_SPEED); });
+}
+
+/* ── BEAT 3: OPEN FIRST (brief "opening / reading the page" response) ── */
+function beatOpenFirst(){
+  setYou(COPY.queries.open, true);
+  setOrbLabel(THINK_LABEL.SHOPPING); $("waveform").classList.remove("on"); clearResp();
+  runStep(4, 700, 4);
+  after(700, ()=>{ setOrbLabel("SPEAKING"); $("waveform").classList.add("on");
+    type("respText", COPY.responses.open, TYPE_SPEED); });
+}
+
+/* ── BEAT 4: INGREDIENTS (GENERAL) — final answer, longest hold ── */
+function beatIngredients(){
+  setYou(COPY.queries.ingredients, true);
+  setOrb("GENERAL"); setOrbLabel(THINK_LABEL.GENERAL); setActiveAgent("GENERAL");
+  $("waveform").classList.remove("on"); clearResp(); $("respCue").className="resp-cue";
+  after(450, ()=> runStep(5, 500, 5));
+  after(800, ()=>{ setOrbLabel("SPEAKING"); $("waveform").classList.add("on");
+    type("respText", COPY.responses.ingredients, TYPE_SPEED, ()=>{
+      $("respCue").innerHTML = '<span>ⓘ</span><span>from the live page — no web search</span>';
+      after(200, ()=> $("respCue").classList.add("show")); }); });
+}
+
+/* ── master loop ── */
+function startLoop(){
+  clearTimers();
+  setIdle();
+  let t = LOOP.idle;
+  after(t, beatResearch);    t += LOOP.research;
+  after(t, beatShopping);    t += LOOP.shopping;
+  after(t, beatOpenFirst);   t += LOOP.openFirst;
+  after(t, beatIngredients); t += LOOP.ingredients;
+  after(t, setIdle);         t += LOOP.reset;
+  after(t, startLoop);
+}
+
+if (document.fonts && document.fonts.ready){
+  document.fonts.ready.then(startLoop);
+  setTimeout(()=>{ if(!timers.length) startLoop(); }, 1200);
+} else { startLoop(); }
+</script>
+</body>
+</html>

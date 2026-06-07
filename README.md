@@ -6,14 +6,16 @@
 
 *Google Developer Groups on Campus Solution Challenge 2026 · Sustainable Development Goal 10 · Sustainable Development Goal 3*
 
+![OpenSight in action — a spoken request routes through the multi-agent system as the reasoning flow advances in real time](readme_assets/opensight_d
+emo.gif)
+
 ---
 
 ## Demo
 
-> **[▶ Watch the 2-minute demo](https://youtu.be/UOYZ2oXvdvM)**
+> **[▶ Watch the 2-minute demo](https://youtu.be/UOYZ2oXvdvM)** — watch OpenSight open a browser and complete the task live.
 
-Three spoken sentences take the user from a research question to a chosen product. Cross-agent memory carries context across tasks, with zero manual navigation. The full step-by-step demo script lives in [DEMO.md](DEMO.md).
-
+Three spoken sentences take the user from a research question to a chosen product. The animation above shows the assistant routing a request and advancing its reasoning in real time; the video shows it opening a browser and driving the live web end to end. Cross-agent memory carries context across tasks, with zero manual navigation. The full step-by-step demo script lives in [DEMO.md](DEMO.md).
 ---
 
 ## The Problem
