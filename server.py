@@ -248,7 +248,6 @@ async def websocket_endpoint(ws: WebSocket):
     _session_shopping_active = bool(_shopping_memory.get("last_results"))
     _session_memory.entities.pop("scraped_content", None)
     _session_memory.entities.pop("last_product", None)
-    _session_memory.entities.pop("last_general_topic", None)
 
     try:
         while True:
