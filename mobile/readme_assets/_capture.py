@@ -12,8 +12,9 @@ Differences from the desktop capture:
     the phone `.card` (440x920), centered on a slightly-darker page; the scene
     is the card plus a small margin so the bezel edge crops cleanly.
   - The loop is a seamless `requestAnimationFrame` modulo of `T.END` (first
-    frame == last frame), so we record one full loop after fonts settle and
-    extract the trailing loop with -sseof — any contiguous T.END window loops.
+    frame == last frame). After fonts settle we call the page's startLoop() to
+    reset it to frame 0 (idle), then record one full loop and extract the
+    trailing loop with -sseof, so the GIF opens on the clean idle frame.
   - GIF is sized for a tall portrait phone (narrower than the desktop card).
 """
 import re
@@ -68,7 +69,8 @@ def record(scene_w, scene_h, loop_ms) -> Path:
         page.goto(HTML.resolve().as_uri())
         page.evaluate("() => document.fonts.ready")
         page.wait_for_timeout(1200)               # settle; fonts on-brand
-        page.wait_for_timeout(loop_ms + 300)      # one full loop (+ tiny tail)
+        page.evaluate("() => window.startLoop && window.startLoop()")  # reset to idle frame 0
+        page.wait_for_timeout(loop_ms + 200)      # exactly one clean loop (+ tail)
         video_path = Path(page.video.path())
         ctx.close()                               # finalizes the .webm
         browser.close()

@@ -10,9 +10,14 @@
     app's assets/images/opensight_logo.png) in this same folder.
 
   LOOP LENGTH
-    10.3 seconds, seamless (first frame == last frame): idle -> listening ->
-    processing (reasoning flow advancing) -> speaking (answer types out, then
-    holds ~2.5s so it's readable) -> crossfade back to idle.
+    ~15.5 seconds, seamless (first frame == last frame). Two queries back to
+    back, each a different intent routed to a different agent:
+      Q1 (SHOPPING): idle -> listening -> processing (reasoning 0->5) ->
+                     speaking (answer types out, then holds so it's readable)
+      Q2 (CALENDAR): the Q1 exchange scrolls up under the top fade as Q2
+                     arrives -> listening -> processing (a FRESH reasoning
+                     0->5) -> speaking
+    then crossfade back to idle.
 
   WHAT TO SCREEN-RECORD
     Record the phone CARD: 440 x 920 px (the bezel + screen, centered on the
@@ -21,10 +26,12 @@
     is visible against the slightly-darker page bg for easy cropping.
 
   EDIT THE DEMO (named constants are right below, in the <script>):
-    DEMO_QUERY   -> the YOU bubble text (the spoken request)
-    ANSWER_TEXT  -> the OPENSIGHT bubble text that types out
-    ACTIVE_AGENT -> which agent banner shows ('brain'|'shopping'|'calendar'|
-                    'research'|'general'); colors/sub-label come from the app.
+    Q1 / Q2  -> the two back-to-back exchanges. Each is {query, answer, agent}:
+       query  -> the YOU bubble text (the spoken request)
+       answer -> the OPENSIGHT bubble text that types out
+       agent  -> which agent banner shows ('brain'|'shopping'|'calendar'|
+                 'research'|'general'); colors/sub-label come from the app.
+    T        -> the LOOP timeline marks (ms); see the timeline comment below.
 
   Every color, font, size, padding, radius, icon glyph and string below is
   taken verbatim from the Flutter source (app_theme.dart, voice_screen.dart,
@@ -92,13 +99,8 @@
   .logo{width:32px; height:32px; border-radius:8px; object-fit:cover; display:block;}
   .brandcol{margin-left:12px; display:flex; flex-direction:column;}
   .brand{font-family:var(--sans); font-size:20px; font-weight:700; color:var(--textPrimary); line-height:1.1;}
-  .tagline{font-family:var(--mono); font-size:11px; letter-spacing:.5px; color:var(--cyan); margin-top:2px;}
+  .tagline{font-family:var(--mono); font-size:11px; letter-spacing:.5px; color:var(--cyan); margin-top:6px;}
   .spacer{flex:1;}
-  .kebab{
-    width:40px; height:40px; border-radius:50%;
-    background:var(--surface); border:2px solid var(--cyan);
-    display:flex; align-items:center; justify-content:center;
-  }
 
   /* ---- Content area (voice_screen.dart _content) ----------------------- */
   .content{position:relative; flex:1; min-height:0;}
@@ -111,7 +113,19 @@
   .convo{
     position:absolute; inset:0; overflow:hidden;
     padding:8px 16px;                      /* fromLTRB(16,8,16,8) */
+  }
+  /* the scrolling message column: translated up (transform only) as the
+     second query arrives, so Q1/A1 scroll up under the top fade */
+  .thread{
     display:flex; flex-direction:column; align-items:stretch;
+    will-change:transform;
+  }
+  .qgroup + .qgroup{margin-top:12px;}     /* gap between the two exchanges */
+  /* top fade: older messages disappear underneath it as the thread scrolls */
+  .topFade{
+    position:absolute; top:0; left:0; right:0; height:44px; z-index:5;
+    pointer-events:none;
+    background:linear-gradient(var(--bgBase), rgba(10,14,23,0));
   }
 
   /* ---- Conversation bubbles (_Bubble) ---------------------------------- */
@@ -220,17 +234,14 @@
   /* ===================================================================== */
   /* idle prompt only in idle */
   [data-phase="idle"] .idlePrompt{opacity:1;}
-  /* YOU bubble: listening/processing/speaking */
-  [data-phase="listening"] .youWrap,
-  [data-phase="processing"] .youWrap,
-  [data-phase="speaking"]  .youWrap{opacity:1; transform:none;}
-  /* OPENSIGHT bubble: speaking only */
-  [data-phase="speaking"] .osWrap{opacity:1; transform:none;}
-  /* agent banner: processing only */
-  [data-phase="processing"] .agentBanner{opacity:1; transform:none;}
-  /* reasoning panel: processing + speaking */
-  [data-phase="processing"] .reasoning,
-  [data-phase="speaking"]  .reasoning{opacity:1; transform:none;}
+  /* Conversation visibility is driven per-exchange by the JS timeline: each
+     YOU/OPENSIGHT bubble, agent banner and reasoning panel gets `.in` when it
+     should be on screen, so two independent exchanges can accumulate instead
+     of one global phase. Removing `.in` lets them crossfade out via the base
+     transition (opacity + transform only). */
+  .youWrap.in, .osWrap.in{opacity:1; transform:none;}
+  .agentBanner.in{opacity:1; transform:none;}
+  .reasoning.in{opacity:1; transform:none;}
   /* caption under mic: idle only */
   [data-phase="idle"] .caption{opacity:1;}
 
@@ -271,39 +282,16 @@
           <div class="tagline">Technology that Adapts to You</div>
         </div>
         <div class="spacer"></div>
-        <div class="kebab">
-          <!-- Icons.more_vert -->
-          <svg width="20" height="20" viewBox="0 0 24 24" fill="#E8EDF4"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
-        </div>
       </div>
 
       <!-- Content -->
       <div class="content">
+        <div class="topFade"></div>
         <div class="idlePrompt">Tap the microphone below and speak your request.</div>
         <div class="convo">
-          <div class="youWrap">
-            <div class="bubble you">
-              <div class="who">YOU</div>
-              <div class="msg" id="youMsg"></div>
-            </div>
-          </div>
-          <div class="osWrap">
-            <div class="bubble os">
-              <div class="who">OPENSIGHT</div>
-              <div class="msg" id="osMsg"></div>
-            </div>
-          </div>
-          <div class="below">
-            <div class="agentBanner" id="agentBanner">
-              <span id="agentIcon"></span>
-              <span class="aname" id="agentName"></span>
-              <span class="asub" id="agentSub"></span>
-            </div>
-            <div class="reasoning" id="reasoning">
-              <div class="rfHead"><span>REASONING FLOW</span><span id="rfCount">0 / 5</span></div>
-              <!-- step rows injected by JS -->
-            </div>
-          </div>
+          <!-- Each exchange group (YOU bubble + agent banner + reasoning +
+               OPENSIGHT bubble) is injected into .thread by the JS below. -->
+          <div class="thread" id="thread"></div>
         </div>
       </div>
 
@@ -347,11 +335,19 @@
 
 <script>
 /* =========================================================================
-   EDIT THESE to match your competition video (query / answer / agent):
+   EDIT THESE to match your competition video. Two back-to-back exchanges,
+   each a DIFFERENT intent routed to a DIFFERENT agent (query / answer / agent):
    ========================================================================= */
-const DEMO_QUERY  = "Find peanut-free snacks under $15";
-const ANSWER_TEXT = "Found 3 options: SkinnyPop, Bear bites, and Made Good bars — all under $15."; /* <- REPLACE with your video's exact answer */
-const ACTIVE_AGENT = "shopping";  /* 'brain' | 'shopping' | 'calendar' | 'research' | 'general' */
+const Q1 = {
+  query : "Find peanut-free snacks under $15",
+  answer: "Found 3 options: SkinnyPop, Bear bites, and Made Good bars — all under $15.",
+  agent : "shopping",   /* 'brain' | 'shopping' | 'calendar' | 'research' | 'general' */
+};
+const Q2 = {
+  query : "Add a dentist appointment Friday at 3",
+  answer: "Added “Dentist appointment” to your calendar for Friday at 3:00 PM.",
+  agent : "calendar",
+};
 
 /* ---- Agent presentation data (verbatim from app_theme.dart AgentInfo) --- */
 const AGENTS = {
@@ -365,14 +361,28 @@ const AGENTS = {
 /* ---- The five reasoning steps (verbatim from reasoning_flow.dart) ------- */
 const STEPS = ["Classify intent","Extract constraints","Route to agent","Execute task","Generate response"];
 
-/* ---- Timeline (ms) -----------------------------------------------------
-   Phase windows (each phase spans the gap to the next mark):
-     idle open  : 0     .. LISTEN  (~1.0s, trimmed)
-     listening  : LISTEN.. PROCESS (1.5s)
-     processing : PROCESS..SPEAK   (3.5s, reasoning 0->5)
-     speaking   : SPEAK .. BACK    (3.8s = 1.3s typing + ~2.5s hold to read)
-     crossfade  : BACK  .. END     (0.5s back to idle; loop is seamless) */
-const T = {LISTEN:1000, PROCESS:2500, SPEAK:6000, BACK:9800, END:10300};
+/* ---- Timeline (ms) — two exchanges, then crossfade back to idle ---------
+   Each exchange spans listen -> process (reasoning 0->5) -> speak. Windows run
+   from one mark to the next:
+     idle open    : 0          .. Q1_LISTEN   (~0.8s)
+     Q1 listening : Q1_LISTEN  .. Q1_PROCESS  (0.8s)
+     Q1 process   : Q1_PROCESS .. Q1_SPEAK    (2.0s, reasoning 0->5)
+     Q1 speaking  : Q1_SPEAK   .. Q2_LISTEN   (3.2s = ~1.3s typing + hold)
+     Q2 listening : Q2_LISTEN  .. Q2_PROCESS  (0.8s; thread scrolls up)
+     Q2 process   : Q2_PROCESS .. Q2_SPEAK    (2.0s, FRESH reasoning 0->5)
+     Q2 speaking  : Q2_SPEAK   .. BACK        (3.6s = ~1.3s typing + hold)
+     crossfade    : BACK       .. END         (2.3s back to idle; seamless) */
+const T = {
+  Q1_LISTEN:  800,
+  Q1_PROCESS: 1600,
+  Q1_SPEAK:   3600,
+  Q2_LISTEN:  6800,
+  Q2_PROCESS: 7600,
+  Q2_SPEAK:   9600,
+  BACK:       13200,
+  END:        15500,
+};
+const TYPE_MS = 1300;   /* answer typing duration at the start of each speak */
 
 /* ---- Material icon glyphs (24-viewBox), tinted to the agent accent ------ */
 function svg(path,color,size){return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="${color}"><path d="${path}"/></svg>`;}
@@ -385,57 +395,119 @@ function checkIcon(color){return svg("M16.59 7.58L10 14.17l-3.59-3.58L5 12l5 5 8
 /* cyan active-step spinner (CircularProgressIndicator strokeWidth 2, 16px) */
 const ACTIVE_SPINNER = `<svg class="spin" width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="#22D3EE" stroke-width="2" stroke-linecap="round" stroke-dasharray="10 38"/></svg>`;
 
-/* ---- One-time DOM setup ------------------------------------------------ */
-const screen = document.getElementById('screen');
-document.getElementById('youMsg').textContent = DEMO_QUERY;
-
-const agent = AGENTS[ACTIVE_AGENT] || AGENTS.shopping;
-const banner = document.getElementById('agentBanner');
-banner.style.background = hexA(agent.color,0.12);
-banner.style.border = "1px solid " + hexA(agent.color,0.5);
-document.getElementById('agentIcon').innerHTML = svg(agent.icon, agent.color, 20);
-const an = document.getElementById('agentName'); an.textContent = agent.name; an.style.color = agent.color;
-document.getElementById('agentSub').textContent = "— " + agent.sub;
-
-/* Build the 5 step rows */
-const reasoning = document.getElementById('reasoning');
-const rows = STEPS.map((title,i)=>{
-  const row = document.createElement('div');
-  row.className = 'step waiting';
-  row.innerHTML = `<div class="ind"><div class="circle"></div></div><div class="stitle">${title}</div><div class="ssub">waiting</div>`;
-  reasoning.appendChild(row);
-  return row;
-});
-const rfCount = document.getElementById('rfCount');
-const osMsg = document.getElementById('osMsg');
-
-/* hex + alpha helper */
+/* ---- hex + alpha helper ------------------------------------------------ */
 function hexA(hex,a){const n=parseInt(hex.slice(1),16); const r=(n>>16)&255,g=(n>>8)&255,b=n&255; return `rgba(${r},${g},${b},${a})`;}
 
-/* ---- Reasoning render (mirrors reasoning_flow.dart status logic) -------- */
-function renderReasoning(done, showActive){
-  rfCount.textContent = done + " / 5";
-  const activeIdx = (showActive && done < STEPS.length) ? done : -1;
-  rows.forEach((row,i)=>{
-    const ind = row.querySelector('.ind');
-    const sub = row.querySelector('.ssub');
-    if(i < done){
-      row.className='step done';
-      ind.innerHTML = checkIcon(hexA('#22C55E',0.55));   /* stepDone @ .55 */
-      sub.textContent='done';
-    } else if(i === activeIdx){
-      row.className='step active';
-      ind.innerHTML = ACTIVE_SPINNER;
-      sub.textContent='active';
-    } else {
-      row.className='step waiting';
-      ind.innerHTML = '<div class="circle"></div>';
-      sub.textContent='waiting';
-    }
+/* ---- One-time DOM setup ------------------------------------------------ */
+const screen = document.getElementById('screen');
+const thread = document.getElementById('thread');
+
+/* Build one exchange group (YOU bubble + agent banner + reasoning + OPENSIGHT
+   bubble) and return its refs + a render() that drives its reasoning panel.
+   Mirrors voice_screen.dart / agent_banner.dart / reasoning_flow.dart. */
+function buildGroup(cfg){
+  const a = AGENTS[cfg.agent] || AGENTS.shopping;
+  const group = document.createElement('div');
+  group.className = 'qgroup';
+  group.innerHTML =
+      '<div class="youWrap"><div class="bubble you"><div class="who">YOU</div>'
+    +   '<div class="msg"></div></div></div>'
+    + '<div class="below">'
+    +   '<div class="agentBanner"><span class="aicon"></span>'
+    +     '<span class="aname"></span><span class="asub"></span></div>'
+    +   '<div class="reasoning"><div class="rfHead"><span>REASONING FLOW</span>'
+    +     '<span class="rfCount">0 / 5</span></div></div>'
+    + '</div>'
+    + '<div class="osWrap"><div class="bubble os"><div class="who">OPENSIGHT</div>'
+    +   '<div class="msg"></div></div></div>';
+  thread.appendChild(group);
+
+  const you = group.querySelector('.youWrap');
+  const os  = group.querySelector('.osWrap');
+  const banner = group.querySelector('.agentBanner');
+  const reasoning = group.querySelector('.reasoning');
+  const osMsg = os.querySelector('.msg');
+
+  /* YOU bubble text (static per exchange) */
+  you.querySelector('.msg').textContent = cfg.query;
+
+  /* agent banner accent: color / border / icon / name / sub from AGENTS */
+  banner.style.background = hexA(a.color,0.12);
+  banner.style.border = "1px solid " + hexA(a.color,0.5);
+  group.querySelector('.aicon').innerHTML = svg(a.icon, a.color, 20);
+  const an = group.querySelector('.aname'); an.textContent = a.name; an.style.color = a.color;
+  group.querySelector('.asub').textContent = "— " + a.sub;
+
+  /* 5 reasoning step rows */
+  const rfCount = group.querySelector('.rfCount');
+  const rows = STEPS.map((title)=>{
+    const row = document.createElement('div');
+    row.className = 'step waiting';
+    row.innerHTML = `<div class="ind"><div class="circle"></div></div><div class="stitle">${title}</div><div class="ssub">waiting</div>`;
+    reasoning.appendChild(row);
+    return row;
   });
+
+  /* mirrors reasoning_flow.dart status logic */
+  function render(done, showActive){
+    rfCount.textContent = done + " / 5";
+    const activeIdx = (showActive && done < STEPS.length) ? done : -1;
+    rows.forEach((row,i)=>{
+      const ind = row.querySelector('.ind');
+      const sub = row.querySelector('.ssub');
+      if(i < done){
+        row.className='step done';
+        ind.innerHTML = checkIcon(hexA('#22C55E',0.55));   /* stepDone @ .55 */
+        sub.textContent='done';
+      } else if(i === activeIdx){
+        row.className='step active';
+        ind.innerHTML = ACTIVE_SPINNER;
+        sub.textContent='active';
+      } else {
+        row.className='step waiting';
+        ind.innerHTML = '<div class="circle"></div>';
+        sub.textContent='waiting';
+      }
+    });
+  }
+  render(0,true);
+
+  return {el:group, you, os, banner, reasoning, osMsg, render};
 }
 
-/* ---- Per-phase label + caption ----------------------------------------- */
+const g1 = buildGroup(Q1);   /* SHOPPING (green) */
+const g2 = buildGroup(Q2);   /* CALENDAR (amber) */
+
+/* Scroll distance to lift Q1/A1 up under the top fade when Q2 arrives.
+   Measured with the answers filled so bubble heights are realistic, then
+   cleared. +12 = inter-group gap; -56 leaves a sliver of A1 peeking. */
+g1.osMsg.textContent = Q1.answer; g2.osMsg.textContent = Q2.answer;
+const SCROLL = Math.max(0, g1.el.offsetHeight + 12 - 56);
+g1.osMsg.textContent = ""; g2.osMsg.textContent = "";
+let curScroll = 0;
+
+/* ---- helpers ----------------------------------------------------------- */
+function setIn(el, on){ el.classList.toggle('in', on); }
+/* reasoning sweep across a [from,to) processing window: 6 stops (0..5), the
+   app's floor(value * (steps+1)). Before: 0/5. After: 5/5, no active. */
+function sweep(g, t, from, to){
+  if(t < from){ g.render(0, true); }
+  else if(t < to){
+    const p = (t - from) / (to - from);
+    g.render(Math.min(STEPS.length, Math.floor(p * (STEPS.length + 1))), true);
+  } else {
+    g.render(STEPS.length, false);
+  }
+}
+/* answer text typed over TYPE_MS at the start of a speak window (auto-empty
+   again before that window, so it re-types cleanly each loop) */
+function typed(text, t, speakFrom){
+  if(t < speakFrom) return "";
+  const p = Math.min(1, (t - speakFrom) / TYPE_MS);
+  return text.slice(0, Math.floor(p * text.length));
+}
+
+/* ---- Per-phase mic label ----------------------------------------------- */
 const LABELS = {
   idle:"Tap microphone to speak",
   listening:"LISTENING — tap to stop",
@@ -451,36 +523,54 @@ function frame(now){
   if(start === null) start = now;
   const t = (now - start) % T.END;
 
-  /* phase */
+  /* Global mic/label phase — the bottom mic reflects the active exchange. */
   let phase;
-  if(t < T.LISTEN || t >= T.BACK) phase='idle';
-  else if(t < T.PROCESS) phase='listening';
-  else if(t < T.SPEAK) phase='processing';
+  if(t < T.Q1_LISTEN || t >= T.BACK) phase='idle';
+  else if((t >= T.Q1_LISTEN && t < T.Q1_PROCESS) ||
+          (t >= T.Q2_LISTEN && t < T.Q2_PROCESS)) phase='listening';
+  else if((t >= T.Q1_PROCESS && t < T.Q1_SPEAK) ||
+          (t >= T.Q2_PROCESS && t < T.Q2_SPEAK)) phase='processing';
   else phase='speaking';
-
   if(phase !== lastPhase){
     screen.dataset.phase = phase;
     micLabel.textContent = LABELS[phase];
-    if(phase==='idle'){ osMsg.textContent=''; renderReasoning(0,true); }
     lastPhase = phase;
   }
 
-  /* reasoning progression during processing: 6 stops (0..5) like the app's
-     floor(value * (steps+1)) sweep across the processing window */
-  if(phase==='processing'){
-    const p = (t - T.PROCESS) / (T.SPEAK - T.PROCESS);   /* 0..1 */
-    const done = Math.min(STEPS.length, Math.floor(p * (STEPS.length + 1)));
-    renderReasoning(done, true);
-  } else if(phase==='speaking'){
-    renderReasoning(STEPS.length, false);                /* 5 / 5, no active */
-    /* type the answer over the first 1.3s of speaking */
-    const typed = Math.min(1, (t - T.SPEAK) / 1300);
-    const n = Math.floor(typed * ANSWER_TEXT.length);
-    osMsg.textContent = ANSWER_TEXT.slice(0, n);
-  }
+  /* Per-exchange visibility: content accumulates (stays `.in`) until BACK,
+     where dropping `.in` crossfades everything out for the seamless loop. */
+  const live = t < T.BACK;
+  setIn(g1.you,       live && t >= T.Q1_LISTEN);
+  setIn(g1.banner,    live && t >= T.Q1_PROCESS);
+  setIn(g1.reasoning, live && t >= T.Q1_PROCESS);
+  setIn(g1.os,        live && t >= T.Q1_SPEAK);
+  setIn(g2.you,       live && t >= T.Q2_LISTEN);
+  setIn(g2.banner,    live && t >= T.Q2_PROCESS);
+  setIn(g2.reasoning, live && t >= T.Q2_PROCESS);
+  setIn(g2.os,        live && t >= T.Q2_SPEAK);
+
+  /* Each exchange runs its own reasoning sweep 0->5. */
+  sweep(g1, t, T.Q1_PROCESS, T.Q1_SPEAK);
+  sweep(g2, t, T.Q2_PROCESS, T.Q2_SPEAK);
+
+  /* Answers type out (empty before their speak window and at the loop top). */
+  g1.osMsg.textContent = typed(Q1.answer, t, T.Q1_SPEAK);
+  g2.osMsg.textContent = typed(Q2.answer, t, T.Q2_SPEAK);
+
+  /* Thread scroll: lift up while Q2 is on stage; eased in JS (transform only)
+     so there is no CSS-transition snap across the loop seam. */
+  const target = (t >= T.Q2_LISTEN && t < T.BACK) ? SCROLL : 0;
+  curScroll += (target - curScroll) * 0.12;
+  thread.style.transform = `translateY(${-curScroll}px)`;
 
   requestAnimationFrame(frame);
 }
+
+/* Capture hook: reset the loop to its first idle frame so _capture.py records
+   exactly one clean loop (idle -> ... -> idle). Mirrors the desktop anim's
+   startLoop(). Harmless when opened directly in a browser. */
+window.startLoop = function(){ start = null; lastPhase = null; curScroll = 0; };
+
 requestAnimationFrame(frame);
 </script>
 </body>
