@@ -5,11 +5,11 @@ talks to the FastAPI `/ws` endpoint, so a future Flutter voice client can mirror
 
 It was extracted by reading the source only. Every fact below cites the file and
 the function/area it came from. Where a message's *text content* is generated at
-runtime (LLM output), that is called out — only the **structure/field names** are
+runtime (LLM output), that is called out; only the **structure/field names** are
 guaranteed by the code, and an illustrative value is shown.
 
 > Scope note: The `/ws` contract is **text-in / text-out only**. Speech-to-text and
-> text-to-speech are *not* part of this contract — the desktop client does its own STT
+> text-to-speech are *not* part of this contract; the desktop client does its own STT
 > (Deepgram) and TTS (Google/OS voices) entirely outside `/ws` (`audio_engine.py`:
 > `_deepgram_listen`, `speak_text`). A Flutter voice client must supply its own STT/TTS
 > and send/receive plain text over `/ws`, exactly as the desktop client does.
@@ -43,12 +43,12 @@ guaranteed by the code, and an illustrative value is shown.
 - This is corroborated on the server side by the comment in `websocket_endpoint`
   referring to "the new-WebSocket-per-utterance model" when explaining why it reloads
   shopping memory from disk on each reconnect.
-- Note on the server: `websocket_endpoint` *does* contain a `while True:` loop that
+  Note on the server: `websocket_endpoint` *does* contain a `while True:` loop that
   could service multiple messages on one socket, but the desktop client never uses
-  it that way — it disconnects after the first `response`. A Flutter client mirroring
+  it that way; it disconnects after the first `response`. A Flutter client mirroring
   the desktop behavior should likewise open one connection per utterance. (Keeping the
   socket open and sending multiple `{"text": ...}` frames would also be accepted by the
-  server, but that is **not** the path the desktop client exercises — see Open questions.)
+  server, but that is **not** the path the desktop client exercises; see Open questions.)
 
 ---
 
@@ -72,7 +72,7 @@ A single JSON **text frame** with one field, `text`.
 ```
 
 That is the **only** message the client sends to start a query. (It may later send
-`browser_result` frames — see §4 — but those are replies to server requests, not
+`browser_result` frames (see §4), but those are replies to server requests, not
 new queries.)
 
 ---
@@ -89,7 +89,7 @@ is also the **end-of-response signal** (the client `break`s its loop on it). The
 `status` and `research_status` messages are *progress indicators only*, not pieces
 of the answer.
 
-### 3a. `status` — progress / which agent is working
+### 3a. `status`: progress / which agent is working
 - **Sender:** `server.py`, `send_status(ws, agent, state, detail)` (also emitted
   inline in `websocket_endpoint`).
 - **Handler:** `agent.py` `msg_type == "status"` branch → updates the UI agent
@@ -117,7 +117,7 @@ Real examples (all emitted in `server.py`):
 { "type": "status", "agent": "IDLE", "state": "idle", "detail": "" }
 ```
 
-### 3b. `research_status` — fine-grained research progress text
+### 3b. `research_status`: fine-grained research progress text
 - **Sender:** `server.py`, the inner `_research_status(msg)` callback inside
   `websocket_endpoint` (driven by the research agent's `status_cb`).
 - **Handler:** `agent.py` `msg_type == "research_status"` branch → forwarded to the
@@ -134,7 +134,7 @@ Real example (the exact text strings are produced by `agents/research.py`
 { "type": "research_status", "text": "Building search query..." }
 ```
 
-### 3c. `browser_action` — server asks the client to drive a browser
+### 3c. `browser_action`: server asks the client to drive a browser
 This is a **server→client request**. On the desktop it triggers Playwright browser
 automation (`desktop_browser.dispatch`). There are two behaviors:
 
@@ -172,7 +172,7 @@ Real examples:
 { "type": "browser_action", "agent": "RESEARCH_OPEN", "url": "https://example.com/paper.pdf" }
 ```
 
-### 3d. `response` — the final spoken answer (END-OF-RESPONSE signal)
+### 3d. `response`: the final spoken answer (END-OF-RESPONSE signal)
 - **Sender:** `server.py`, `websocket_endpoint`:
   `await ws.send_text(json.dumps({"type": "response", "text": final_response}))`
   (also used for the "didn't catch that" and single-word fast paths).
@@ -193,7 +193,7 @@ produced by the agents at runtime):
 ```
 
 Exactly one `response` is sent per query, and it is always the last message of the
-exchange. There is no separate "done"/"end" frame — `response` *is* the terminator.
+exchange. There is no separate "done"/"end" frame; `response` *is* the terminator.
 
 ---
 
@@ -201,7 +201,7 @@ exchange. There is no separate "done"/"end" frame — `response` *is* the termin
 
 Not a query, but part of the contract: the client's answer to a `browser_action`.
 
-- **Sender:** `agent.py` — `_query_agent_response_async` (synchronous SHOPPING /
+- **Sender:** `agent.py`: `_query_agent_response_async` (synchronous SHOPPING /
   SHOPPING_OPEN) and `_browser_action_background` (fire-and-forget).
 - **Receiver:** `server.py` `_wait_for_browser_result`, which matches on
   `msg.get("type") == "browser_result"` and `msg.get("agent") == <expected agent>`,

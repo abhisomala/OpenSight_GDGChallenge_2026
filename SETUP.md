@@ -1,4 +1,4 @@
-# OpenSight — Setup (Developers)
+# OpenSight: Setup (Developers)
 
 This is the developer build and configuration guide. End users do not need any of this: they download the standalone Windows executable, run it, and say "OpenSight." See the [README](README.md) for the project overview and [DEMO.md](DEMO.md) for the demo script.
 

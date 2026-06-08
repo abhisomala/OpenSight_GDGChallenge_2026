@@ -6,23 +6,22 @@
 
 *Google Developer Groups on Campus Solution Challenge 2026 · Sustainable Development Goal 10 · Sustainable Development Goal 3*
 
-![OpenSight in action — a spoken request routes through the multi-agent system as the reasoning flow advances in real time](readme_assets/opensight_demo.gif)
-
 ---
 
 ## Demo
 
-> **[▶ Watch the 2-minute demo](https://youtu.be/UOYZ2oXvdvM)** — watch OpenSight open a browser and complete the task live.
+> **[▶ Watch the 2-minute demo](https://youtu.be/UOYZ2oXvdvM)**  where OpenSight open a browser and complete the task live.
 
 Three spoken sentences take the user from a research question to a chosen product. The animation above shows the assistant routing a request and advancing its reasoning in real time; the video shows it opening a browser and driving the live web end to end. Cross-agent memory carries context across tasks, with zero manual navigation. The full step-by-step demo script lives in [DEMO.md](DEMO.md).
+
 ---
 
 ## Repository structure
 
 This is a monorepo with two clients on one backend:
 
-- **Repo root** — the desktop engine and backend: the FastAPI WebSocket server (`server.py`), the multi-agent system (`agents/`), the Tkinter desktop UI (`ui/`, `desktop_app.py`), audio/voice (`audio_engine.py`), and browser automation (`desktop_browser.py`). This is the primary OpenSight application.
-- **`mobile/`** — the Flutter Android voice client: a thin "voice in, text over `/ws`, voice out" front end that talks to the same backend. It contains no agent or model code; the engine does all the work. The `/ws` message contract both clients implement lives in [CONTRACT.md](CONTRACT.md).
+- **Repo root** - the desktop engine and backend: the FastAPI WebSocket server (`server.py`), the multi-agent system (`agents/`), the Tkinter desktop UI (`ui/`, `desktop_app.py`), audio/voice (`audio_engine.py`), and browser automation (`desktop_browser.py`). This is the primary OpenSight application.
+- **`mobile/`** - the Flutter Android voice client: a thin "voice in, text over `/ws`, voice out" front end that talks to the same backend. It contains no agent or model code; the engine does all the work. The `/ws` message contract both clients implement lives in [CONTRACT.md](CONTRACT.md).
 
 ---
 
@@ -78,44 +77,37 @@ OpenSight does all of this with a single spoken sentence per step.
 
 ## Interface
 
-![OpenSight UI - reasoning flow panel active during a research query](assets/icons/frontend.png)
+![OpenSight UI - reasoning flow panel active during a research query](readme_assets/opensight_demo.gif)
 
 *The desktop client (engine + Tkinter UI) during a research query.*
 
 ![The OpenSight Flutter Android voice client advancing through the reasoning flow during a voice request](mobile/readme_assets/opensight_mobile_demo.gif)
 
-*The Flutter Android voice client (`mobile/`) — a thin "voice in, text over `/ws`, voice out" front end on the same backend.*
+*The Flutter Android voice client (`mobile/`): a thin "voice in, text over `/ws`, voice out" front end on the same backend.*
 
 ---
 
 ## Architecture
 
-```
-User speaks
-    |
-    v
-Deepgram Nova-2 STT -- real-time streaming speech to text
-    |
-    v
-Firebase Authentication -- per-user identity; the client carries a user token, never a model key
-    |
-    v
-OpenSight server on Google Cloud -- FastAPI WebSocket · SessionMemory · browser_manager
-    -- holds the Vertex AI service account; every model call happens server-side
-    |
-    v
-Gemini 2.5 Flash on Vertex AI -- intent classification · preference extraction
-    |
-    |--► Shopping agent --► Playwright → Amazon (scrapes results + product pages)
-    |
-    |--► Research agent --► SerpAPI → Google Scholar (extracts product_hint for handoff)
-    |
-    |--► Calendar agent --► Google Calendar API (read + create events)
-    |
-    └--► General agent --► Google Custom Search API + Gemini synthesis
-    |
-    v
-Google Cloud Text-to-Speech -- spoken response streamed back to user
+```mermaid
+flowchart TD
+    A([User speaks]):::io --> B[Deepgram Nova-2 STT]
+    B --> C[Firebase Authentication<br/><i>user token, never a model key</i>]
+    C --> D[OpenSight server · Google Cloud<br/><i>FastAPI WebSocket · SessionMemory · browser_manager</i>]
+    D --> E[Gemini 2.5 Flash · Vertex AI<br/><i>intent classification · preference extraction</i>]
+
+    E --> F[Shopping agent<br/>Playwright → Amazon]:::agent
+    E --> G[Research agent<br/>SerpAPI → Google Scholar]:::agent
+    E --> H[Calendar agent<br/>Google Calendar API]:::agent
+    E --> I[General agent<br/>Google Custom Search + Gemini]:::agent
+
+    F --> J[Google Cloud Text-to-Speech]:::io
+    G --> J
+    H --> J
+    I --> J
+
+    classDef io fill:#1f6feb,stroke:#1158c7,color:#ffffff
+    classDef agent fill:#161b22,stroke:#30363d,color:#e6edf3
 ```
 
 ### How it works

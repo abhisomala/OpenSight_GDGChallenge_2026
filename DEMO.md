@@ -6,7 +6,7 @@
 
 ```bash
 # Terminal 1
-uvicorn server:app --host 127.0.0.1 --port 8080 --fresh
+uvicorn server:app --host 127.0.0.1 --port 8080 
 
 # Terminal 2
 python desktop_app.py
