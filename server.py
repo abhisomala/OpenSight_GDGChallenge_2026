@@ -58,6 +58,21 @@ if os.getenv("GOOGLE_TTS_CREDENTIALS_B64"):
 
 app = FastAPI()
 
+REQUIRE_AUTH = os.getenv("REQUIRE_AUTH", "").lower() == "true"
+
+_firebase_initialized = False
+
+
+def _ensure_firebase() -> None:
+    """Import and initialize firebase_admin exactly once. Only ever called when REQUIRE_AUTH=true."""
+    global _firebase_initialized
+    if _firebase_initialized:
+        return
+    import firebase_admin
+    firebase_admin.initialize_app()
+    _firebase_initialized = True
+
+
 AGENT_LABELS = {
     "BRAIN": "routing",
     "SHOPPING": "searching Amazon",
@@ -205,6 +220,24 @@ async def websocket_endpoint(ws: WebSocket):
     await ws.accept()
     print("[opensight] client connected")
 
+    if REQUIRE_AUTH:
+        _ensure_firebase()
+        from firebase_admin import auth as _fb_auth
+        try:
+            raw_auth = await asyncio.wait_for(ws.receive_text(), timeout=10.0)
+            msg = json.loads(raw_auth)
+            if msg.get("type") != "auth" or not msg.get("token"):
+                await ws.close(code=4001)
+                return
+            loop = asyncio.get_event_loop()
+            await loop.run_in_executor(None, _fb_auth.verify_id_token, msg["token"])
+        except Exception:
+            try:
+                await ws.close(code=4001)
+            except Exception:
+                pass
+            return
+
     # Reset per-connection state — Cloud Run reuses the process across sessions
     # Reload prior shopping results from disk on reconnect (instead of blanking them) so
     # multi-turn follow-ups like "open the first one" survive the new-WebSocket-per-utterance
@@ -215,7 +248,6 @@ async def websocket_endpoint(ws: WebSocket):
     _session_shopping_active = bool(_shopping_memory.get("last_results"))
     _session_memory.entities.pop("scraped_content", None)
     _session_memory.entities.pop("last_product", None)
-    _session_memory.entities.pop("last_general_topic", None)
 
     try:
         while True:
@@ -374,7 +406,7 @@ async def websocket_endpoint(ws: WebSocket):
                             papers, scholar_url, clean_query = await search_scholar(
                                 query, status_cb=_research_status
                             )
-                            result = synthesize_research_response(
+                            result = await synthesize_research_response(
                                 papers, clean_query, memory=_session_memory
                             )
                             if papers:

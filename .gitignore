@@ -19,3 +19,5 @@ OpenSight-debug.spec
 .deploy_env.tmp
 
 run_tests.py
+test_hint.py
+test_auth.py

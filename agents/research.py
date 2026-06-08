@@ -47,80 +47,37 @@ def _shorten_title(title: str) -> str:
     return title
 
 
-def _extract_product_hint(papers: list, query: str) -> str:
-    """Infer a shopping hint from research papers and the query."""
-    mappings = [
-        (r"omega.?3|fish oil|\bdha\b|\bepa\b",   "omega-3 fish oil supplement"),
-        (r"magnesium",                           "magnesium supplement"),
-        (r"vitamin\s*d",                         "vitamin D supplement"),
-        (r"melatonin|sleep",                     "melatonin sleep supplement"),
-        (r"probiotics?|gut",                     "probiotic supplement"),
-        (r"curcumin|turmeric",                   "turmeric curcumin supplement"),
-        (r"creatine",                            "creatine supplement"),
-        (r"collagen",                            "collagen supplement"),
-        (r"zinc",                                "zinc supplement"),
-        (r"vitamin\s*c|ascorb",                  "vitamin C supplement"),
-        (r"b12|cobalamin",                       "vitamin B12 supplement"),
-        (r"\biron\b",                            "iron supplement"),
-        (r"caffeine|coffee",                     "caffeine supplement"),
-        (r"protein",                             "protein supplement"),
-        (r"ashwagandha|adaptogen",               "ashwagandha supplement"),
-        (r"berberine",                           "berberine supplement"),
-        (r"resveratrol",                         "resveratrol supplement"),
-        (r"CoQ10|coenzyme",                      "CoQ10 supplement"),
-        # ── Electronics / Audio ───────────────────────────────────────────────
-        (r"noise.cancel|headphone|over.ear|on.ear|earphone", "noise-canceling headphones"),
-        (r"earbud|in.ear|tws|wireless\s*audio",              "wireless earbuds"),
-        (r"bluetooth\s*speaker|portable\s*speaker",          "bluetooth speaker"),
-        (r"laptop|notebook|ultrabook",                       "laptop"),
-        (r"tablet|ipad\s*alternative",                       "tablet"),
-        (r"smartphone|android\s*phone",                      "smartphone"),
-        (r"smartwatch|fitness\s*watch|wearable",             "smartwatch"),
-        (r"keyboard|mechanical\s*key",                       "mechanical keyboard"),
-        (r"monitor|display\s*screen",                        "computer monitor"),
-        (r"webcam|video\s*call\s*camera",                    "webcam"),
-        (r"camera|mirrorless|dslr",                          "camera"),
-        (r"router|wifi|mesh\s*network",                      "wifi router"),
-        (r"charger|power\s*bank|portable\s*power",           "portable charger"),
-        # ── Fitness / Exercise ────────────────────────────────────────────────
-        (r"yoga\s*mat|yoga",                                 "yoga mat"),
-        (r"resistance\s*band|strength\s*training",           "resistance bands"),
-        (r"dumbbell|weight\s*training|home\s*gym",           "dumbbells"),
-        (r"treadmill|running\s*machine",                     "treadmill"),
-        (r"foam\s*roll|muscle\s*recovery",                   "foam roller"),
-        (r"running\s*shoe|athletic\s*shoe",                  "running shoes"),
-        (r"fitness\s*tracker|step\s*counter",                "fitness tracker"),
-        # ── Ergonomics / Office ───────────────────────────────────────────────
-        (r"standing\s*desk|sit.stand",                       "standing desk"),
-        (r"ergonomic\s*chair|office\s*chair|back\s*pain",    "ergonomic chair"),
-        (r"lumbar\s*support|back\s*support",                 "lumbar support cushion"),
-        # ── Food / Nutrition ──────────────────────────────────────────────────
-        (r"peanut.free|nut.free|allergy.friendly",           "peanut-free snacks"),
-        (r"gluten.free\s*snack",                             "gluten-free snacks"),
-        (r"keto\s*snack|low\s*carb\s*snack",                 "keto snacks"),
-        (r"protein\s*snack|high\s*protein\s*food",           "high protein snacks"),
-        (r"organic\s*snack|healthy\s*snack",                 "healthy snacks"),
-        (r"green\s*tea|matcha",                              "matcha green tea"),
-        (r"air\s*fryer",                                     "air fryer"),
-        (r"blender|smoothie",                                "blender"),
-        # ── Sleep / Wellness ──────────────────────────────────────────────────
-        (r"sleep\s*aid|insomnia|sleep\s*quality",            "sleep supplement"),
-        (r"mattress",                                        "mattress"),
-        (r"white\s*noise|sleep\s*sound",                     "white noise machine"),
-        (r"light\s*therapy|sad\s*lamp|seasonal",             "light therapy lamp"),
-    ]
-    # Check query alone first — query is always the authoritative topic indicator.
-    # Paper titles may mention unrelated supplements in comparative studies,
-    # which would cause the wrong pattern to fire before the correct one.
-    for pattern, hint in mappings:
-        if re.search(pattern, query, re.IGNORECASE):
-            return hint
+async def _extract_product_hint(papers: list, query: str) -> str:
+    """Infer a shopping hint from research papers and the query via LLM.
 
-    # Fall back to paper titles if query alone didn't match.
-    title_text = " ".join(p.get("title", "") for p in papers[:3])
-    for pattern, hint in mappings:
-        if re.search(pattern, title_text, re.IGNORECASE):
+    Primary path: ask the model for a 2-4 word Amazon search phrase that
+    someone would buy to act on this research. Falls back to stopword-stripping
+    if the model returns empty, too verbose, or raises.
+    """
+    titles = [p.get("title", "") for p in papers[:3] if p.get("title")]
+    titles_text = "\n".join(f"- {t}" for t in titles)
+
+    prompt = (
+        "You are helping route a research query to an Amazon product search.\n"
+        "Research topic: {query}\n"
+        "Top paper titles:\n{titles}\n\n"
+        "Reply with ONLY a 2-4 word Amazon search phrase a person would buy to act on this "
+        "research (e.g. 'omega-3 fish oil supplement'). "
+        "If no product applies, reply with an empty string. "
+        "No punctuation, no explanation, no quotes."
+    ).format(query=query, titles=titles_text)
+
+    try:
+        raw = await generate_with_fallback(prompt)
+        # Strip whitespace, surrounding quotes, and any markdown
+        hint = raw.strip().strip('"\'`').strip("*_").strip()
+        # Reject if empty or longer than ~6 words (model hallucinated an explanation)
+        if hint and len(hint.split()) <= 6:
             return hint
+    except Exception as e:
+        print(f"[research] _extract_product_hint LLM error: {e}")
+
+    # Fallback: stopword-stripping from query
     stopwords = {"what", "find", "show", "tell", "about", "papers", "research",
                  "study", "some", "give", "recent", "latest", "effects",
                  "impact", "role", "the", "and", "for", "on", "of", "in"}
@@ -245,7 +202,7 @@ async def search_scholar(
     return papers, scholar_url, clean_query
 
 
-def synthesize_research_response(
+async def synthesize_research_response(
     papers: list,
     clean_query: str,
     memory=None,
@@ -267,7 +224,7 @@ def synthesize_research_response(
         memory.set_result("research", resp)
         memory.add_turn("assistant", resp, agent="research")
 
-        product_hint = _extract_product_hint(papers, clean_query)
+        product_hint = await _extract_product_hint(papers, clean_query)
         print(f"[research] clean_query: '{clean_query}'")
         print(f"[research] product_hint extracted: '{product_hint}'")
         if product_hint:
