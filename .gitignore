@@ -2,6 +2,7 @@
 .venv/
 __pycache__/
 *.pyc
+.claude/
 shopping_memory.json
 conversation_history.json
 opensight_memory.json
@@ -21,3 +22,25 @@ OpenSight-debug.spec
 run_tests.py
 test_hint.py
 test_auth.py
+
+# Machine-local runtime state + internal-only docs (kept on disk, out of the repo)
+.opensight_ui.json
+docs/internal/
+
+# ---- Flutter / mobile/ client (generated artifacts) ----
+# (build/, __pycache__/, *.pyc above already match nested dirs too)
+mobile/.dart_tool/
+mobile/.flutter-plugins
+mobile/.flutter-plugins-dependencies
+mobile/.pub-cache/
+mobile/.pub/
+mobile/coverage/
+mobile/**/ephemeral/
+mobile/android/.gradle/
+mobile/android/.kotlin/
+mobile/android/app/debug/
+mobile/android/app/profile/
+mobile/android/app/release/
+mobile/ios/Flutter/.last_build_id
+*.iml
+.dart_tool/

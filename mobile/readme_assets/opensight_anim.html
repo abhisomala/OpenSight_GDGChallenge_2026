@@ -1,0 +1,487 @@
+<!DOCTYPE html>
+<!--
+  ===========================================================================
+  OpenSight — README loop animation (pixel-matched to the Flutter app)
+  ===========================================================================
+  HOW TO OPEN
+    Double-click this file. It runs fully OFFLINE in any modern browser
+    (Chrome/Edge/Firefox). No build step, no server, no dependencies.
+    The only sibling file it needs is `opensight_logo.png` (copied from the
+    app's assets/images/opensight_logo.png) in this same folder.
+
+  LOOP LENGTH
+    10.3 seconds, seamless (first frame == last frame): idle -> listening ->
+    processing (reasoning flow advancing) -> speaking (answer types out, then
+    holds ~2.5s so it's readable) -> crossfade back to idle.
+
+  WHAT TO SCREEN-RECORD
+    Record the phone CARD: 440 x 920 px (the bezel + screen, centered on the
+    darker page). If you want only the app screen with no bezel, record the
+    inner SCREEN: 412 x 892 px. Both are centered on the page; the card edge
+    is visible against the slightly-darker page bg for easy cropping.
+
+  EDIT THE DEMO (named constants are right below, in the <script>):
+    DEMO_QUERY   -> the YOU bubble text (the spoken request)
+    ANSWER_TEXT  -> the OPENSIGHT bubble text that types out
+    ACTIVE_AGENT -> which agent banner shows ('brain'|'shopping'|'calendar'|
+                    'research'|'general'); colors/sub-label come from the app.
+
+  Every color, font, size, padding, radius, icon glyph and string below is
+  taken verbatim from the Flutter source (app_theme.dart, voice_screen.dart,
+  reasoning_flow.dart, agent_banner.dart, app_header.dart). See the checklist
+  at the bottom of this comment for the source mapping.
+
+  SOURCE MAPPING (value -> file)
+    bgBase/surface/border/cyan/text*/micGrad*/amber/orange/step* -> app_theme.dart AppColors
+    kRadius=16, mono stack, AppText.* sizes/weights/spacing       -> app_theme.dart
+    88px mic, gradients, glow, pulse ring, icons, labels, caption  -> voice_screen.dart
+    REASONING FLOW "X / 5", 5 step titles, done/active/waiting     -> reasoning_flow.dart
+    SHOPPING name/sub/color/icon, pill paddings, radius            -> agent_banner.dart
+    header logo 32/r8, OpenSight title, tagline, 40px cyan-ring ⋮  -> app_header.dart
+    Chat/Agents/Settings bottom nav                                -> home_shell.dart
+  ===========================================================================
+-->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>OpenSight — voice flow loop</title>
+<style>
+  /* ---- Tokens from app_theme.dart AppColors ---------------------------- */
+  :root{
+    --bgBase:#0A0E17; --surface:#141A28; --border:#232A3B;
+    --cyan:#22D3EE; --textPrimary:#E8EDF4; --textDim:#8A93A6;
+    --micGradStart:#3B82F6; --micGradEnd:#8B5CF6;
+    --amber:#F59E0B; --orange:#F97316;
+    --stepDone:#22C55E; --stepActive:#22D3EE; --stepWaiting:#8A93A6;
+    --error:#EF4444;
+    --radius:16px;
+    --mono: monospace, 'Courier New', Courier;       /* kMonoFamily + kMonoFallback */
+    --sans: -apple-system, 'Segoe UI', Roboto, system-ui, sans-serif; /* brandTitle sans */
+    --spring: cubic-bezier(.34,1.56,.64,1);
+    --ease: cubic-bezier(.4,0,.2,1);
+  }
+  *{box-sizing:border-box; margin:0; padding:0;}
+  html,body{height:100%;}
+  body{
+    /* Page bg is a shade darker than bgBase so the card edge is croppable. */
+    background:#05080F;
+    display:flex; align-items:center; justify-content:center;
+    min-height:100vh; font-family:var(--mono);
+  }
+
+  /* ---- Device bezel + phone screen ------------------------------------- */
+  .card{
+    width:440px; height:920px;           /* bezel (14) + screen (412x892) */
+    padding:14px;
+    background:#000; border-radius:42px;
+    box-shadow:0 24px 80px rgba(0,0,0,.6);
+  }
+  .screen{
+    position:relative; width:412px; height:892px;
+    background:var(--bgBase); border-radius:30px; overflow:hidden;
+    display:flex; flex-direction:column;
+    color:var(--textPrimary);
+  }
+
+  /* ---- Header (app_header.dart) ---------------------------------------- */
+  .header{
+    display:flex; align-items:center;
+    padding:12px 12px 12px 20px;          /* fromLTRB(20,12,12,12) */
+  }
+  .logo{width:32px; height:32px; border-radius:8px; object-fit:cover; display:block;}
+  .brandcol{margin-left:12px; display:flex; flex-direction:column;}
+  .brand{font-family:var(--sans); font-size:20px; font-weight:700; color:var(--textPrimary); line-height:1.1;}
+  .tagline{font-family:var(--mono); font-size:11px; letter-spacing:.5px; color:var(--cyan); margin-top:2px;}
+  .spacer{flex:1;}
+  .kebab{
+    width:40px; height:40px; border-radius:50%;
+    background:var(--surface); border:2px solid var(--cyan);
+    display:flex; align-items:center; justify-content:center;
+  }
+
+  /* ---- Content area (voice_screen.dart _content) ----------------------- */
+  .content{position:relative; flex:1; min-height:0;}
+  .idlePrompt{
+    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    padding:0 32px; text-align:center;
+    font-family:var(--mono); font-size:14px; color:var(--textDim);
+    opacity:0; transition:opacity .4s var(--ease);
+  }
+  .convo{
+    position:absolute; inset:0; overflow:hidden;
+    padding:8px 16px;                      /* fromLTRB(16,8,16,8) */
+    display:flex; flex-direction:column; align-items:stretch;
+  }
+
+  /* ---- Conversation bubbles (_Bubble) ---------------------------------- */
+  .bubble{
+    width:85%;                             /* widthFactor 0.85 */
+    padding:10px 14px;                     /* H14 V10 */
+    border-radius:var(--radius);
+    border:1px solid transparent;
+  }
+  .bubble .who{
+    font-family:var(--mono); font-size:12px; letter-spacing:1.5px;
+    font-weight:600; color:var(--cyan);    /* sectionHeader */
+  }
+  .bubble .msg{
+    font-family:var(--mono); font-size:14px; color:var(--textPrimary);
+    margin-top:4px; white-space:pre-wrap;
+  }
+  .youWrap{display:flex; justify-content:flex-end;}
+  .osWrap{display:flex; justify-content:flex-start; margin-top:12px;}
+  .bubble.you{
+    background:rgba(34,211,238,.12); border-color:rgba(34,211,238,.4); /* cyan .12 / .4 */
+  }
+  .bubble.os{
+    background:var(--surface); border-color:var(--border);
+  }
+  /* spring-in: YOU from right, OPENSIGHT from left */
+  .youWrap{opacity:0; transform:translateX(24px); transition:opacity .45s var(--ease), transform .45s var(--spring);}
+  .osWrap{opacity:0; transform:translateX(-24px); transition:opacity .45s var(--ease), transform .45s var(--spring);}
+
+  /* below-conversation block: agent banner + reasoning flow */
+  .below{margin-top:16px;}
+
+  /* ---- Agent banner (agent_banner.dart) -------------------------------- */
+  .agentBanner{
+    display:flex; align-items:center;
+    width:100%; padding:12px 16px;          /* H16 V12 */
+    border-radius:var(--radius);
+    /* color/border set inline from the chosen agent accent */
+    margin-bottom:12px;
+    opacity:0; transform:translateY(8px); transition:opacity .4s var(--ease), transform .4s var(--spring);
+  }
+  .agentBanner .aname{font-family:var(--mono); font-size:14px; font-weight:700; margin-left:12px;}
+  .agentBanner .asub{font-family:var(--mono); font-size:13px; color:var(--textDim); margin-left:6px;
+    overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
+
+  /* ---- Reasoning flow (reasoning_flow.dart) ---------------------------- */
+  .reasoning{
+    width:100%; padding:16px; border-radius:var(--radius);
+    background:var(--surface); border:1px solid var(--border);
+    opacity:0; transform:translateY(8px); transition:opacity .4s var(--ease), transform .4s var(--spring);
+  }
+  .rfHead{display:flex; justify-content:space-between; align-items:center; margin-bottom:12px;}
+  .rfHead span{font-family:var(--mono); font-size:12px; letter-spacing:1.5px; font-weight:600; color:var(--cyan);}
+  .step{display:flex; align-items:center; margin-top:10px;}
+  .step:first-of-type{margin-top:0;}
+  .step .ind{width:20px; height:20px; display:flex; align-items:center; justify-content:center;}
+  .step .stitle{flex:1; margin-left:12px; font-family:var(--mono); font-size:14px;}
+  .step .ssub{font-family:var(--mono); font-size:13px;}
+  /* status title colors */
+  .step.done   .stitle{color:var(--textDim);}
+  .step.active .stitle{color:var(--cyan); font-weight:700;}
+  .step.waiting .stitle{color:rgba(138,147,166,.7);}
+  .step.done   .ssub{color:rgba(34,197,94,.6);}
+  .step.active .ssub{color:var(--cyan);}
+  .step.waiting .ssub{color:rgba(138,147,166,.7);}
+  /* waiting indicator: thin dim hollow circle */
+  .circle{width:16px; height:16px; border-radius:50%; border:1.5px solid rgba(138,147,166,.6);}
+
+  /* ---- Bottom controls (voice_screen.dart _bottomControls) ------------- */
+  .bottom{padding:8px 24px 24px; display:flex; flex-direction:column; align-items:center;}
+  .micArea{width:128px; height:128px; position:relative; display:flex; align-items:center; justify-content:center;}
+  .mic{
+    width:88px; height:88px; border-radius:50%;
+    background:linear-gradient(135deg,var(--micGradStart),var(--micGradEnd)); /* topLeft->bottomRight */
+    display:flex; align-items:center; justify-content:center;
+    transition:background .25s var(--ease), box-shadow .25s var(--ease);
+    position:relative; z-index:2;
+  }
+  .pulse{
+    position:absolute; width:88px; height:88px; border-radius:50%;
+    background:rgba(34,211,238,.45); z-index:1; opacity:0;
+  }
+  .label{margin-top:16px; font-family:var(--mono); font-size:14px; font-weight:600; letter-spacing:.5px; text-align:center; color:var(--textPrimary);}
+  .caption{margin-top:8px; font-family:var(--mono); font-size:13px; color:var(--textDim); text-align:center;
+    opacity:0; transition:opacity .3s var(--ease);}
+
+  /* ---- Bottom nav (home_shell.dart) ------------------------------------ */
+  .nav{display:flex; justify-content:space-evenly; align-items:center;
+    padding:8px; border-top:1px solid var(--border); background:var(--bgBase);}
+  .navItem{display:flex; align-items:center; padding:8px 16px; border-radius:var(--radius);
+    border:1px solid transparent; gap:8px;}
+  .navItem .ntext{font-family:var(--mono); font-size:14px; color:var(--textDim);}
+  .navItem.sel{background:rgba(34,211,238,.12); border-color:var(--cyan);}
+  .navItem.sel .ntext{color:var(--cyan); font-weight:700;}
+  .navItem.sel svg{fill:var(--cyan);}
+  .navItem svg{fill:var(--textDim);}
+
+  /* ---- Icon helpers ---------------------------------------------------- */
+  svg{display:block;}
+  .spin{animation:spin .9s linear infinite; transform-origin:50% 50%;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  @keyframes pulse{0%{transform:scale(1); opacity:.45;} 100%{transform:scale(1.4545); opacity:0;}}
+
+  /* ===================================================================== */
+  /* PHASE-DRIVEN VISIBILITY (data-phase set by the JS timeline)           */
+  /* ===================================================================== */
+  /* idle prompt only in idle */
+  [data-phase="idle"] .idlePrompt{opacity:1;}
+  /* YOU bubble: listening/processing/speaking */
+  [data-phase="listening"] .youWrap,
+  [data-phase="processing"] .youWrap,
+  [data-phase="speaking"]  .youWrap{opacity:1; transform:none;}
+  /* OPENSIGHT bubble: speaking only */
+  [data-phase="speaking"] .osWrap{opacity:1; transform:none;}
+  /* agent banner: processing only */
+  [data-phase="processing"] .agentBanner{opacity:1; transform:none;}
+  /* reasoning panel: processing + speaking */
+  [data-phase="processing"] .reasoning,
+  [data-phase="speaking"]  .reasoning{opacity:1; transform:none;}
+  /* caption under mic: idle only */
+  [data-phase="idle"] .caption{opacity:1;}
+
+  /* mic glow + gradient per phase */
+  [data-phase="listening"] .mic{box-shadow:0 0 24px 2px rgba(34,211,238,.55);}
+  [data-phase="processing"] .mic{
+    background:linear-gradient(135deg,var(--amber),var(--orange));
+    box-shadow:0 0 24px 2px rgba(245,158,11,.55);
+  }
+  /* pulse ring only while listening */
+  [data-phase="listening"] .pulse{animation:pulse 1.3s var(--ease) infinite;}
+
+  /* mic glyph visibility */
+  .ic-mic, .ic-micoff, .ic-spin{display:none;}
+  [data-phase="idle"] .ic-mic,
+  [data-phase="speaking"] .ic-mic{display:block;}
+  [data-phase="listening"] .ic-micoff{display:block;}
+  [data-phase="processing"] .ic-spin{display:block;}
+
+  /* label color per phase */
+  [data-phase="listening"] .label{color:var(--cyan);}
+  [data-phase="processing"] .label{color:var(--amber);}
+
+  @media (prefers-reduced-motion: reduce){
+    *{animation:none !important; transition:none !important;}
+  }
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="screen" id="screen" data-phase="idle">
+
+      <!-- Header -->
+      <div class="header">
+        <img class="logo" src="opensight_logo.png" alt="OpenSight logo">
+        <div class="brandcol">
+          <div class="brand">OpenSight</div>
+          <div class="tagline">Technology that Adapts to You</div>
+        </div>
+        <div class="spacer"></div>
+        <div class="kebab">
+          <!-- Icons.more_vert -->
+          <svg width="20" height="20" viewBox="0 0 24 24" fill="#E8EDF4"><path d="M12 8c1.1 0 2-.9 2-2s-.9-2-2-2-2 .9-2 2 .9 2 2 2zm0 2c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2zm0 6c-1.1 0-2 .9-2 2s.9 2 2 2 2-.9 2-2-.9-2-2-2z"/></svg>
+        </div>
+      </div>
+
+      <!-- Content -->
+      <div class="content">
+        <div class="idlePrompt">Tap the microphone below and speak your request.</div>
+        <div class="convo">
+          <div class="youWrap">
+            <div class="bubble you">
+              <div class="who">YOU</div>
+              <div class="msg" id="youMsg"></div>
+            </div>
+          </div>
+          <div class="osWrap">
+            <div class="bubble os">
+              <div class="who">OPENSIGHT</div>
+              <div class="msg" id="osMsg"></div>
+            </div>
+          </div>
+          <div class="below">
+            <div class="agentBanner" id="agentBanner">
+              <span id="agentIcon"></span>
+              <span class="aname" id="agentName"></span>
+              <span class="asub" id="agentSub"></span>
+            </div>
+            <div class="reasoning" id="reasoning">
+              <div class="rfHead"><span>REASONING FLOW</span><span id="rfCount">0 / 5</span></div>
+              <!-- step rows injected by JS -->
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Bottom controls -->
+      <div class="bottom">
+        <div class="micArea">
+          <div class="pulse"></div>
+          <div class="mic">
+            <!-- Icons.mic -->
+            <svg class="ic-mic" width="36" height="36" viewBox="0 0 24 24" fill="#fff"><path d="M12 14c1.66 0 3-1.34 3-3V5c0-1.66-1.34-3-3-3S9 3.34 9 5v6c0 1.66 1.34 3 3 3zm5.3-3c0 3-2.54 5.1-5.3 5.1S6.7 14 6.7 11H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c3.28-.48 6-3.3 6-6.72h-1.7z"/></svg>
+            <!-- Icons.mic_off -->
+            <svg class="ic-micoff" width="36" height="36" viewBox="0 0 24 24" fill="#fff"><path d="M19 11h-1.7c0 .74-.16 1.43-.43 2.05l1.23 1.23c.56-.98.9-2.09.9-3.28zm-4.02.17c0-.06.02-.11.02-.17V5c0-1.66-1.34-3-3-3S9 3.34 9 5v.18l5.98 5.99zM4.27 3L3 4.27l6 6V11c0 1.66 1.33 3 3 3 .22 0 .44-.03.65-.08l1.66 1.66c-.71.33-1.5.52-2.31.52-2.76 0-5.3-2.1-5.3-5.1H5c0 3.41 2.72 6.23 6 6.72V21h2v-3.28c.91-.13 1.77-.45 2.54-.9L19.73 21 21 19.73 4.27 3z"/></svg>
+            <!-- white processing spinner (CircularProgressIndicator, strokeWidth 3, 32px) -->
+            <svg class="ic-spin spin" width="32" height="32" viewBox="0 0 32 32" fill="none">
+              <circle cx="16" cy="16" r="13" stroke="#fff" stroke-width="3" stroke-linecap="round" stroke-dasharray="20 82"/>
+            </svg>
+          </div>
+        </div>
+        <div class="label" id="micLabel">Tap microphone to speak</div>
+        <div class="caption">Gemini · Deepgram · Google TTS</div>
+      </div>
+
+      <!-- Bottom nav (Chat active) -->
+      <div class="nav">
+        <div class="navItem sel">
+          <svg width="20" height="20" viewBox="0 0 24 24"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12z"/></svg>
+          <span class="ntext">Chat</span>
+        </div>
+        <div class="navItem">
+          <svg width="20" height="20" viewBox="0 0 24 24"><path d="M13 8.57c-.79 0-1.43.64-1.43 1.43s.64 1.43 1.43 1.43 1.43-.64 1.43-1.43-.64-1.43-1.43-1.43z"/><path d="M13 3C9.25 3 6.2 5.94 6.02 9.64L4.1 12.2c-.25.33-.01.8.4.8H6v3c0 1.1.9 2 2 2h1v3h7v-4.68c2.36-1.12 4-3.53 4-6.32 0-3.87-3.13-7-7-7zm3 7c0 .13-.01.26-.02.39l.83.66c.08.06.1.16.05.25l-.8 1.39c-.05.09-.16.12-.24.09l-.99-.4c-.21.16-.43.29-.67.39L14 13.83c-.01.1-.1.17-.2.17h-1.6c-.1 0-.18-.07-.2-.17l-.15-1.06c-.25-.1-.47-.23-.68-.39l-.99.4c-.09.03-.2 0-.25-.09l-.8-1.39c-.05-.08-.03-.19.05-.25l.84-.66c-.01-.13-.02-.26-.02-.39s.02-.27.04-.39l-.85-.66c-.08-.06-.1-.16-.05-.25l.8-1.39c.05-.09.15-.12.24-.09l.99.4c.21-.16.43-.29.68-.39l.15-1.06c.01-.09.09-.16.19-.16h1.6c.1 0 .19.07.2.16l.15 1.06c.24.1.47.23.68.39l.99-.4c.09-.03.2 0 .24.09l.8 1.39c.05.09.03.19-.05.25l-.85.66c.04.12.05.26.05.39z"/></svg>
+          <span class="ntext">Agents</span>
+        </div>
+        <div class="navItem">
+          <svg width="20" height="20" viewBox="0 0 24 24"><path d="M19.14 12.94c.04-.3.06-.61.06-.94 0-.32-.02-.64-.07-.94l2.03-1.58c.18-.14.23-.41.12-.61l-1.92-3.32c-.12-.22-.37-.29-.59-.22l-2.39.96c-.5-.38-1.03-.7-1.62-.94l-.36-2.54c-.04-.24-.24-.41-.48-.41h-3.84c-.24 0-.43.17-.47.41l-.36 2.54c-.59.24-1.13.57-1.62.94l-2.39-.96c-.22-.08-.47 0-.59.22L2.74 8.87c-.12.21-.08.47.12.61l2.03 1.58c-.05.3-.09.63-.09.94s.02.64.07.94l-2.03 1.58c-.18.14-.23.41-.12.61l1.92 3.32c.12.22.37.29.59.22l2.39-.96c.5.38 1.03.7 1.62.94l.36 2.54c.05.24.24.41.48.41h3.84c.24 0 .44-.17.47-.41l.36-2.54c.59-.24 1.13-.56 1.62-.94l2.39.96c.22.08.47 0 .59-.22l1.92-3.32c.12-.22.07-.47-.12-.61l-2.01-1.58zM12 15.6c-1.98 0-3.6-1.62-3.6-3.6s1.62-3.6 3.6-3.6 3.6 1.62 3.6 3.6-1.62 3.6-3.6 3.6z"/></svg>
+          <span class="ntext">Settings</span>
+        </div>
+      </div>
+
+    </div>
+  </div>
+
+<script>
+/* =========================================================================
+   EDIT THESE to match your competition video (query / answer / agent):
+   ========================================================================= */
+const DEMO_QUERY  = "Find peanut-free snacks under $15";
+const ANSWER_TEXT = "Found 3 options: SkinnyPop, Bear bites, and Made Good bars — all under $15."; /* <- REPLACE with your video's exact answer */
+const ACTIVE_AGENT = "shopping";  /* 'brain' | 'shopping' | 'calendar' | 'research' | 'general' */
+
+/* ---- Agent presentation data (verbatim from app_theme.dart AgentInfo) --- */
+const AGENTS = {
+  brain:    {name:"BRAIN",    sub:"routing requests",     color:"#3B82F6", icon:psychologyIcon()},
+  shopping: {name:"SHOPPING", sub:"scanning options",     color:"#22C55E", icon:shoppingBagIcon()},
+  calendar: {name:"CALENDAR", sub:"checking schedules",   color:"#F59E0B", icon:calendarIcon()},
+  research: {name:"RESEARCH", sub:"pulling sources",       color:"#A855F7", icon:scienceIcon()},
+  general:  {name:"GENERAL",  sub:"composing responses",  color:"#F97316", icon:sparkleIcon()},
+};
+
+/* ---- The five reasoning steps (verbatim from reasoning_flow.dart) ------- */
+const STEPS = ["Classify intent","Extract constraints","Route to agent","Execute task","Generate response"];
+
+/* ---- Timeline (ms) -----------------------------------------------------
+   Phase windows (each phase spans the gap to the next mark):
+     idle open  : 0     .. LISTEN  (~1.0s, trimmed)
+     listening  : LISTEN.. PROCESS (1.5s)
+     processing : PROCESS..SPEAK   (3.5s, reasoning 0->5)
+     speaking   : SPEAK .. BACK    (3.8s = 1.3s typing + ~2.5s hold to read)
+     crossfade  : BACK  .. END     (0.5s back to idle; loop is seamless) */
+const T = {LISTEN:1000, PROCESS:2500, SPEAK:6000, BACK:9800, END:10300};
+
+/* ---- Material icon glyphs (24-viewBox), tinted to the agent accent ------ */
+function svg(path,color,size){return `<svg width="${size}" height="${size}" viewBox="0 0 24 24" fill="${color}"><path d="${path}"/></svg>`;}
+function shoppingBagIcon(){return "M18 6h-2c0-2.21-1.79-4-4-4S8 3.79 8 6H6c-1.1 0-2 .9-2 2v12c0 1.1.9 2 2 2h12c1.1 0 2-.9 2-2V8c0-1.1-.9-2-2-2zm-6-2c1.1 0 2 .9 2 2h-4c0-1.1.9-2 2-2zm6 16H6V8h2v2c0 .55.45 1 1 1s1-.45 1-1V8h4v2c0 .55.45 1 1 1s1-.45 1-1V8h2v12z";}
+function psychologyIcon(){return "M13 8.57c-.79 0-1.43.64-1.43 1.43s.64 1.43 1.43 1.43 1.43-.64 1.43-1.43-.64-1.43-1.43-1.43zM13 3C9.25 3 6.2 5.94 6.02 9.64L4.1 12.2c-.25.33-.01.8.4.8H6v3c0 1.1.9 2 2 2h1v3h7v-4.68c2.36-1.12 4-3.53 4-6.32 0-3.87-3.13-7-7-7z";}
+function calendarIcon(){return "M19 3h-1V1h-2v2H8V1H6v2H5c-1.11 0-1.99.9-1.99 2L3 19c0 1.1.89 2 2 2h14c1.1 0 2-.9 2-2V5c0-1.1-.9-2-2-2zm0 16H5V8h14v11z";}
+function scienceIcon(){return "M19.8 18.4L14 10.67V6.5l1.35-1.69c.26-.33.03-.81-.39-.81H9.04c-.42 0-.65.48-.39.81L10 6.5v4.17L4.2 18.4c-.49.66-.02 1.6.8 1.6h14c.82 0 1.29-.94.8-1.6z";}
+function sparkleIcon(){return "M19 9l1.25-2.75L23 5l-2.75-1.25L19 1l-1.25 2.75L15 5l2.75 1.25L19 9zm-7.5.5L9 4 6.5 9.5 1 12l5.5 2.5L9 20l2.5-5.5L17 12l-5.5-2.5zM19 15l-1.25 2.75L15 19l2.75 1.25L19 23l1.25-2.75L23 19l-2.75-1.25L19 15z";}
+function checkIcon(color){return svg("M16.59 7.58L10 14.17l-3.59-3.58L5 12l5 5 8-8zM12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 18c-4.41 0-8-3.59-8-8s3.59-8 8-8 8 3.59 8 8-3.59 8-8 8z",color,18);}
+/* cyan active-step spinner (CircularProgressIndicator strokeWidth 2, 16px) */
+const ACTIVE_SPINNER = `<svg class="spin" width="16" height="16" viewBox="0 0 16 16" fill="none"><circle cx="8" cy="8" r="6" stroke="#22D3EE" stroke-width="2" stroke-linecap="round" stroke-dasharray="10 38"/></svg>`;
+
+/* ---- One-time DOM setup ------------------------------------------------ */
+const screen = document.getElementById('screen');
+document.getElementById('youMsg').textContent = DEMO_QUERY;
+
+const agent = AGENTS[ACTIVE_AGENT] || AGENTS.shopping;
+const banner = document.getElementById('agentBanner');
+banner.style.background = hexA(agent.color,0.12);
+banner.style.border = "1px solid " + hexA(agent.color,0.5);
+document.getElementById('agentIcon').innerHTML = svg(agent.icon, agent.color, 20);
+const an = document.getElementById('agentName'); an.textContent = agent.name; an.style.color = agent.color;
+document.getElementById('agentSub').textContent = "— " + agent.sub;
+
+/* Build the 5 step rows */
+const reasoning = document.getElementById('reasoning');
+const rows = STEPS.map((title,i)=>{
+  const row = document.createElement('div');
+  row.className = 'step waiting';
+  row.innerHTML = `<div class="ind"><div class="circle"></div></div><div class="stitle">${title}</div><div class="ssub">waiting</div>`;
+  reasoning.appendChild(row);
+  return row;
+});
+const rfCount = document.getElementById('rfCount');
+const osMsg = document.getElementById('osMsg');
+
+/* hex + alpha helper */
+function hexA(hex,a){const n=parseInt(hex.slice(1),16); const r=(n>>16)&255,g=(n>>8)&255,b=n&255; return `rgba(${r},${g},${b},${a})`;}
+
+/* ---- Reasoning render (mirrors reasoning_flow.dart status logic) -------- */
+function renderReasoning(done, showActive){
+  rfCount.textContent = done + " / 5";
+  const activeIdx = (showActive && done < STEPS.length) ? done : -1;
+  rows.forEach((row,i)=>{
+    const ind = row.querySelector('.ind');
+    const sub = row.querySelector('.ssub');
+    if(i < done){
+      row.className='step done';
+      ind.innerHTML = checkIcon(hexA('#22C55E',0.55));   /* stepDone @ .55 */
+      sub.textContent='done';
+    } else if(i === activeIdx){
+      row.className='step active';
+      ind.innerHTML = ACTIVE_SPINNER;
+      sub.textContent='active';
+    } else {
+      row.className='step waiting';
+      ind.innerHTML = '<div class="circle"></div>';
+      sub.textContent='waiting';
+    }
+  });
+}
+
+/* ---- Per-phase label + caption ----------------------------------------- */
+const LABELS = {
+  idle:"Tap microphone to speak",
+  listening:"LISTENING — tap to stop",
+  processing:"PROCESSING…",
+  speaking:"SPEAKING",
+};
+const micLabel = document.getElementById('micLabel');
+let lastPhase = null;
+
+/* ---- Master timeline (requestAnimationFrame -> seamless loop) ----------- */
+let start = null;
+function frame(now){
+  if(start === null) start = now;
+  const t = (now - start) % T.END;
+
+  /* phase */
+  let phase;
+  if(t < T.LISTEN || t >= T.BACK) phase='idle';
+  else if(t < T.PROCESS) phase='listening';
+  else if(t < T.SPEAK) phase='processing';
+  else phase='speaking';
+
+  if(phase !== lastPhase){
+    screen.dataset.phase = phase;
+    micLabel.textContent = LABELS[phase];
+    if(phase==='idle'){ osMsg.textContent=''; renderReasoning(0,true); }
+    lastPhase = phase;
+  }
+
+  /* reasoning progression during processing: 6 stops (0..5) like the app's
+     floor(value * (steps+1)) sweep across the processing window */
+  if(phase==='processing'){
+    const p = (t - T.PROCESS) / (T.SPEAK - T.PROCESS);   /* 0..1 */
+    const done = Math.min(STEPS.length, Math.floor(p * (STEPS.length + 1)));
+    renderReasoning(done, true);
+  } else if(phase==='speaking'){
+    renderReasoning(STEPS.length, false);                /* 5 / 5, no active */
+    /* type the answer over the first 1.3s of speaking */
+    const typed = Math.min(1, (t - T.SPEAK) / 1300);
+    const n = Math.floor(typed * ANSWER_TEXT.length);
+    osMsg.textContent = ANSWER_TEXT.slice(0, n);
+  }
+
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+</script>
+</body>
+</html>

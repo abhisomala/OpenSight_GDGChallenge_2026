@@ -6,8 +6,7 @@
 
 *Google Developer Groups on Campus Solution Challenge 2026 · Sustainable Development Goal 10 · Sustainable Development Goal 3*
 
-![OpenSight in action — a spoken request routes through the multi-agent system as the reasoning flow advances in real time](readme_assets/opensight_d
-emo.gif)
+![OpenSight in action — a spoken request routes through the multi-agent system as the reasoning flow advances in real time](readme_assets/opensight_demo.gif)
 
 ---
 
@@ -16,6 +15,15 @@ emo.gif)
 > **[▶ Watch the 2-minute demo](https://youtu.be/UOYZ2oXvdvM)** — watch OpenSight open a browser and complete the task live.
 
 Three spoken sentences take the user from a research question to a chosen product. The animation above shows the assistant routing a request and advancing its reasoning in real time; the video shows it opening a browser and driving the live web end to end. Cross-agent memory carries context across tasks, with zero manual navigation. The full step-by-step demo script lives in [DEMO.md](DEMO.md).
+---
+
+## Repository structure
+
+This is a monorepo with two clients on one backend:
+
+- **Repo root** — the desktop engine and backend: the FastAPI WebSocket server (`server.py`), the multi-agent system (`agents/`), the Tkinter desktop UI (`ui/`, `desktop_app.py`), audio/voice (`audio_engine.py`), and browser automation (`desktop_browser.py`). This is the primary OpenSight application.
+- **`mobile/`** — the Flutter Android voice client: a thin "voice in, text over `/ws`, voice out" front end that talks to the same backend. It contains no agent or model code; the engine does all the work. The `/ws` message contract both clients implement lives in [CONTRACT.md](CONTRACT.md).
+
 ---
 
 ## The Problem
@@ -56,7 +64,7 @@ Users speak naturally. OpenSight understands intent, navigates autonomously, and
 
 ### What makes it different
 
-Existing tools like NVDA and JAWS read interfaces linearly and have no awareness of context between tasks. Apple VoiceOver is mobile-first and does not navigate desktop web flows autonomously. Even ChatGPT and general voice assistants cannot open a browser, navigate search results, and carry context from one query into the next without being told every step explicitly.
+Existing tools like NVDA and JAWS read interfaces linearly and have no awareness of context between tasks. Apple VoiceOver, like NVDA and JAWS, still reads interfaces linearly and requires the user to drive every step; it does not navigate or act autonomously. Even ChatGPT and general voice assistants cannot open a browser, navigate search results, and carry context from one query into the next without being told every step explicitly.
 
 OpenSight does all of this with a single spoken sentence per step.
 
@@ -71,6 +79,12 @@ OpenSight does all of this with a single spoken sentence per step.
 ## Interface
 
 ![OpenSight UI - reasoning flow panel active during a research query](assets/icons/frontend.png)
+
+*The desktop client (engine + Tkinter UI) during a research query.*
+
+![The OpenSight Flutter Android voice client advancing through the reasoning flow during a voice request](mobile/readme_assets/opensight_mobile_demo.gif)
+
+*The Flutter Android voice client (`mobile/`) — a thin "voice in, text over `/ws`, voice out" front end on the same backend.*
 
 ---
 
