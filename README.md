@@ -10,9 +10,9 @@
 
 ## Demo
 
-> **[▶ Watch the 2-minute demo](https://youtu.be/UOYZ2oXvdvM)**  where OpenSight open a browser and complete the task live.
+> **[▶ Watch the 2-minute demo](https://youtu.be/UOYZ2oXvdvM)** where OpenSight opens a browser and completes the task live.
 
-Three spoken sentences take the user from a research question to a chosen product. The animation above shows the assistant routing a request and advancing its reasoning in real time; the video shows it opening a browser and driving the live web end to end. Cross-agent memory carries context across tasks, with zero manual navigation. The full step-by-step demo script lives in [DEMO.md](DEMO.md).
+Three spoken sentences take the user from a research question to a chosen product. The video shows the assistant opening a browser and driving the live web end to end, advancing its reasoning in real time as it goes. Cross-agent memory carries context across tasks, with zero manual navigation. The full step-by-step demo script lives in [DEMO.md](DEMO.md).
 
 ---
 
@@ -20,8 +20,8 @@ Three spoken sentences take the user from a research question to a chosen produc
 
 This is a monorepo with two clients on one backend:
 
-- **Repo root** - the desktop engine and backend: the FastAPI WebSocket server (`server.py`), the multi-agent system (`agents/`), the Tkinter desktop UI (`ui/`, `desktop_app.py`), audio/voice (`audio_engine.py`), and browser automation (`desktop_browser.py`). This is the primary OpenSight application.
-- **`mobile/`** - the Flutter Android voice client: a thin "voice in, text over `/ws`, voice out" front end that talks to the same backend. It contains no agent or model code; the engine does all the work. The `/ws` message contract both clients implement lives in [CONTRACT.md](CONTRACT.md).
+- **Repo root:** the desktop engine and backend, including the FastAPI WebSocket server (`server.py`), the multi-agent system (`agents/`), the Tkinter desktop UI (`ui/`, `desktop_app.py`), audio/voice (`audio_engine.py`), and browser automation (`desktop_browser.py`). This is the primary OpenSight application.
+- **`mobile/`:** the Flutter Android voice client, a thin "voice in, text over `/ws`, voice out" front end that talks to the same backend. It contains no agent or model code; the engine does all the work. The `/ws` message contract both clients implement lives in [CONTRACT.md](CONTRACT.md).
 
 ---
 
@@ -59,15 +59,19 @@ OpenSight replaces passive reading with **active task execution**.
 
 Users speak naturally. OpenSight understands intent, navigates autonomously, and speaks results back without the user ever touching a keyboard or memorizing a shortcut.
 
-**Stanford University** found speech input is **3x faster than keyboard** (161 vs 53 WPM) with a 20.4% lower error rate. OpenSight is built on that insight end-to-end.
+**Stanford University** found speech input is **3x faster than keyboard** (161 vs 53 WPM) with a 20.4% lower error rate. OpenSight is built on that insight end to end.
 
 ### What makes it different
 
-Existing tools like NVDA and JAWS read interfaces linearly and have no awareness of context between tasks. Apple VoiceOver, like NVDA and JAWS, still reads interfaces linearly and requires the user to drive every step; it does not navigate or act autonomously. Even ChatGPT and general voice assistants cannot open a browser, navigate search results, and carry context from one query into the next without being told every step explicitly.
+There are two relevant categories of existing tools, and OpenSight is distinct from each on a different axis.
+
+**Versus screen readers (NVDA, JAWS, VoiceOver):** these read interfaces linearly, carry no context between tasks, and require the user to drive every step. They describe a page. They do not search, filter, compare, or act. OpenSight executes the task and speaks back only the result.
+
+**Versus agentic browsers and assistants (for example ChatGPT Atlas):** these can perform multi-step browser actions and carry context across tasks, so "agentic" alone is not the distinction. The difference is who they are built for. Agent mode in tools like Atlas is designed to be supervised visually: it narrates what it is doing, pauses for the user to watch on sensitive steps, and assumes the user can see the screen and take over. That interaction model presumes sight. These tools have also drawn early criticism from the blind community for poor screen reader accessibility in their own interfaces. OpenSight is built to be operated entirely without sight: voice in, a spoken answer out, a wake word instead of a cursor, and no visual surface to monitor.
 
 OpenSight does all of this with a single spoken sentence per step.
 
-**Cross-agent memory:** After a research query, OpenSight automatically carries that context into a follow-up shopping search. The user says *"find me a supplement for that"* and OpenSight already knows what "that" is. No existing screen reader or voice assistant does this.
+**Cross-agent memory:** After a research query, OpenSight automatically carries that context into a follow-up shopping search. The user says *"find me a supplement for that"* and OpenSight already knows what "that" is. No existing screen reader or voice assistant does this for a non-sighted user end to end.
 
 **Live page awareness:** When a product page opens, OpenSight scrapes it in real time. Asking *"what are the ingredients"* returns the actual ingredient list from the open page, not a generic web search.
 
@@ -91,9 +95,9 @@ OpenSight does all of this with a single spoken sentence per step.
 
 ```mermaid
 flowchart TD
-    A([User speaks]):::io --> B[Deepgram Nova-2 STT]
-    B --> C[Firebase Authentication<br/><i>user token, never a model key</i>]
-    C --> D[OpenSight server · Google Cloud<br/><i>FastAPI WebSocket · SessionMemory · browser_manager</i>]
+    A([User speaks]):::io --> B[Deepgram Nova-2 STT<br/><i>desktop</i>]
+    B --> C[Firebase Authentication<br/><i>when enabled · user token, never a model key</i>]
+    C --> D[OpenSight backend<br/><i>FastAPI WebSocket · SessionMemory · browser_manager</i>]
     D --> E[Gemini 2.5 Flash · Vertex AI<br/><i>intent classification · preference extraction</i>]
 
     E --> F[Shopping agent<br/>Playwright → Amazon]:::agent
@@ -110,29 +114,31 @@ flowchart TD
     classDef agent fill:#161b22,stroke:#30363d,color:#e6edf3
 ```
 
+*The diagram shows the desktop pipeline. The Android client performs speech-to-text and text-to-speech on-device; everything from the WebSocket inward is identical.*
+
 ### How it works
 
-**No client holds the Gemini key:** Clients talk only to the backend, which holds the Vertex AI credentials server-side and makes every Gemini call itself. The backend verifies a Firebase ID token before accepting a connection, so access is gated by per-user identity rather than a shared key. The Android client signs in with Firebase Anonymous Auth and presents its token; extending the same handshake to the desktop client is on the near-term roadmap.
+**No client holds the model key:** Clients talk only to the backend, which holds the Vertex AI credentials and makes every Gemini call itself. When authentication is enabled, the backend verifies a Firebase ID token before accepting a connection, so access is gated by per-user identity rather than a shared key. Server-side verification is implemented and the Android client signs in with Firebase Anonymous Auth and presents its token; enforcement sits behind a feature flag, and extending the same handshake to the desktop client is on the near-term roadmap.
 
-**Production model serving:** Gemini 2.5 Flash runs on Vertex AI, Google's production AI platform, giving production-grade quota and scaling rather than a rate-limited developer key.
+**Production model serving:** Gemini 2.5 Flash runs on Vertex AI, Google's production AI platform, giving production-grade quota and scaling rather than a rate-limited developer key. The credential is loaded server-side via Application Default Credentials.
 
-**Routing:** Every utterance passes through Gemini 2.5 Flash which classifies intent and decides which agent handles it. Follow-up queries are detected and short-circuited before Gemini using local pattern matching, preserving context without extra API calls.
+**Routing:** Every utterance passes through Gemini 2.5 Flash, which classifies intent and decides which agent handles it. Follow-up queries are detected and short-circuited before Gemini using local pattern matching, preserving context without an extra model call.
 
-**Cross-agent handoff:** `SessionMemory` persists across all agents and WebSocket reconnects. When the Research agent finds papers on omega-3, it extracts a `product_hint` and stores it. When the user says *"find me a supplement for that under $30"*, the router detects the research context and builds the Amazon query automatically.
+**Cross-agent handoff:** `SessionMemory` persists across all agents and WebSocket reconnects. When the Research agent finds papers on a topic, it extracts a product hint and stores it. When the user says *"find me a supplement for that under $30"*, the router detects the research context and builds the Amazon query automatically. The product hint is produced by a Gemini call rather than a hardcoded keyword table, so the handoff generalizes to topics it was never explicitly coded for, not just the ones in the demo.
 
 **Browser lifecycle:** All browser windows are managed through a central `browser_manager` registry. Opening Amazon closes Scholar. Opening a product page closes Amazon. When the wake word fires, `browser_manager.focus_opensight()` snaps the desktop app back to the foreground via Win32 `SetForegroundWindow`.
 
-**Live scraping:** When a product page opens, Playwright scrapes ingredient fields and feature bullets before handing control to the user. Follow-up questions about the open product are answered from scraped data, not a web search.
+**Live scraping:** When a product page opens, Playwright waits for the result content to load, then scrapes ingredient fields and feature bullets before handing control to the user. Follow-up questions about the open product are answered from the scraped data, not a web search, so the spoken answer matches what is on the page.
 
 ---
 
 ## Validation
 
-OpenSight is validated on two tracks: structured task testing, and direct partnership with the organizations and leaders who serve the blind and visually impaired (BVI) community.
+OpenSight is validated on two tracks: structured task testing, and direct engagement with the organizations and leaders who serve the blind and visually impaired (BVI) community.
 
 ### Task testing
 
-Tested using simulated visual impairment methodology, a standard technique in HCI accessibility research where participants complete tasks without visual input to approximate the screen reader experience.
+Tested using simulated visual impairment methodology, a standard technique in HCI accessibility research where participants complete tasks without visual input to approximate the screen reader experience. This does not fully replicate the lived experience of blindness, and structured trials with BVI participants are the planned next phase.
 
 **Self-measured baseline:** With no prior NVDA experience, the omega-3 supplement search task on Amazon took approximately 10 minutes. The identical task took under 60 seconds with OpenSight.
 
@@ -147,13 +153,13 @@ Three consistent feedback themes emerged: accent recognition accuracy (raised by
 
 ### Partnership and stakeholder validation
 
-We are working directly with organizations and leaders in the BVI space to validate the problem, shape the product around real user needs, and run structured trials with BVI participants.
+We are engaging directly with organizations and leaders in the BVI space to validate the problem, shape the product around real user needs, and run structured trials with BVI participants.
 
-**Virginia Department for the Blind and Vision Impaired (DBVI):** We are working with the Regional Manager and the Director of Rehabilitation Technology Services to ground OpenSight in the real workflows and needs of the people the agency serves. Their feedback directly informed planned low-vision support such as font scaling.
+**Virginia Department for the Blind and Vision Impaired (DBVI):** We met with the Regional Manager, who helped us validate the problem and refine the product, and whose feedback directly informed planned low-vision support such as font scaling. A session with the Director of Rehabilitation Technology Services is scheduled for next month.
 
-**Blind Institute of Technology (BIT):** We are working with their Executive Director to validate and determine product-market fit. BIT's accessibility work has been recognized with national awards and featured at **Google Cloud Next 2019** and Dreamforce 2019.
+**Blind Institute of Technology (BIT):** We have an initial meeting scheduled with founder and Executive Director Mike Hess, a blind 20-year IT veteran. BIT places BVI professionals at Fortune 500 companies and its accessibility work has been featured at **Google Cloud Next 2019**.
 
-Structured trials with blind and visually impaired participants are being conducted through these partnerships as the next validation phase, moving beyond simulated testing to direct feedback from the community OpenSight is built for.
+Structured trials with blind and visually impaired participants are planned through these relationships as the next validation phase, moving beyond simulated testing to direct feedback from the community OpenSight is built for.
 
 **Clean install verified:** The full setup from a fresh build has been tested and confirmed working.
 
@@ -165,13 +171,13 @@ Structured trials with blind and visually impaired participants are being conduc
 
 OpenSight is built around decisions that make it inherently extensible and ready for real users.
 
-**Multi-agent architecture:** Adding a new capability (email, file management, IDE control, music) is just adding a new agent file and a routing rule in `router.py`. The voice pipeline, memory system, and WebSocket server are fully decoupled from what agents do. The system currently has five agents. It could have fifty without touching the core.
+**Multi-agent architecture:** Adding a new capability (email, file management, IDE control, music) is just adding a new agent file and a routing rule in `router.py`. The voice pipeline, memory system, and WebSocket server are fully decoupled from what agents do. The system currently has four agents. It could have fifty without touching the core.
 
-**Cloud-hosted and keyless clients:** The FastAPI backend is hosted on Google Cloud and holds the Vertex AI credentials server-side. Clients carry no model key: they authenticate the user with Firebase Authentication and call the backend, which makes the model calls. This is a true multi-user foundation, with no shared embedded key and each user identified and gated individually.
+**Keyless clients, credentials in the backend:** No client embeds the model key; the backend makes every Gemini call. The Android client is a true thin client that carries no model credentials and talks to the backend over `/ws`. The desktop ships as a self-contained Windows application that runs the backend locally, so an end user installs nothing and provisions no keys. A containerized Cloud Run deployment is built as the path for the multi-user, mobile-facing backend, where each user is identified and gated individually with Firebase Authentication.
 
-**Zero-friction distribution by design:** OpenSight ships as a standalone Windows executable. The end user downloads one `.exe`, double-clicks it, and says "OpenSight": no Python, no dependencies, no terminal, no API keys. This was an intentional scalability decision, not a convenience afterthought. The target user is a blind or visually impaired person, not a developer, so the distributed artifact has to behave like any ordinary consumer app. Everything heavy or sensitive (agent orchestration, model access, credentials) lives in the Google Cloud backend, and the client stays thin. Onboarding a new user is a single download with no per-user keys to provision and nothing to configure, so reaching more users is a distribution problem, not a setup problem. The executable is the distribution endpoint of a system architected from the start to scale.
+**Zero-friction distribution by design:** OpenSight ships as a standalone Windows executable. The end user downloads one `.exe`, double-clicks it, and says "OpenSight": no Python, no dependencies, no terminal, no keys to provision. This was an intentional scalability decision, not a convenience afterthought. The target user is a blind or visually impaired person, not a developer, so the distributed artifact has to behave like any ordinary consumer app. The full stack, including the voice pipeline, agent orchestration, and model access, is bundled and runs locally on the user's machine, so onboarding is a single download with nothing to configure. Reaching more users is a distribution problem, not a setup problem.
 
-**Cross-platform reach (proof of concept):** A Flutter-based **Android client** has been built as a completed proof of concept. It is a thin, accessible, voice-first front door to the same Google Cloud backend, designed to be fully usable eyes-free with Android TalkBack. It was built phone-first on purpose: blind and visually impaired users rely overwhelmingly on phones with built-in screen readers, so the phone is the real distribution surface. iOS was intentionally excluded from this phase. The platform's permission model places inherent constraints on the always-listening microphone access and cross-application control that are central to OpenSight's design, whereas Android's more open model fits a voice-first, always-available assistant.
+**Cross-platform reach (proof of concept):** A Flutter-based **Android client** has been built as a completed proof of concept. It is a thin, accessible, voice-first front end to the same backend, with on-device speech-to-text and text-to-speech, designed to be fully usable eyes-free with Android TalkBack. It was built phone-first on purpose: blind and visually impaired users rely overwhelmingly on phones with built-in screen readers, so the phone is the real distribution surface. iOS was intentionally excluded from this phase. That platform's permission model places inherent constraints on the always-listening microphone access and cross-application control that are central to OpenSight's design, whereas Android's more open model fits a voice-first, always-available assistant.
 
 The always-on wake word loop means OpenSight already functions as a background accessibility layer, the foundation for full OS-level control across any application.
 
@@ -180,9 +186,11 @@ The always-on wake word loop means OpenSight already functions as a background a
 - Full OS-level control: IDE navigation, file management, email
 - Cross-application memory: preferences and context that survive across sessions
 - Low-vision support: font scaling and screen magnification alongside the voice-first flow
+- Extend Firebase Authentication to the desktop client and enable enforcement by default, with Firebase App Check for hardening
+- Cloud Run deployment for the multi-user, mobile-facing backend with persistent per-user memory
 - Harden the Android proof of concept into a full release on the same agent backend
-- Braille display output: parallel text channel alongside voice
-- Expanded structured trials with BVI participants through our DBVI and BIT partnerships
+- Braille display output: a parallel text channel alongside voice
+- Expanded structured trials with BVI participants through the DBVI and BIT relationships
 
 ---
 
@@ -191,10 +199,10 @@ The always-on wake word loop means OpenSight already functions as a background a
 | Technology | How OpenSight uses it |
 |---|---|
 | **Gemini 2.5 Flash** | Intent routing on every utterance, response synthesis, preference extraction, cross-agent reasoning, follow-up detection |
-| **Vertex AI** | Production serving for Gemini 2.5 Flash, called server-side via a service account: production-grade quota, control, and scaling |
-| **Firebase Authentication** | Per-user identity, replacing the single-embedded-key model and gating who can use the backend |
-| **Google Cloud Text-to-Speech** | Spoken responses streamed back to the user |
-| **Google Cloud** | Hosting for the FastAPI backend, which holds all model credentials |
+| **Vertex AI** | Production serving for Gemini 2.5 Flash, called server-side via Application Default Credentials: production-grade quota, control, and scaling |
+| **Firebase Authentication** | Per-user identity. Server-side ID-token verification is implemented and the Android client authenticates; enforcement is behind a feature flag, and the desktop client is on the roadmap |
+| **Google Cloud Text-to-Speech** | Spoken responses on the desktop client (the Android client uses on-device text-to-speech) |
+| **Google Cloud** | Application Default Credentials for server-side access to Google APIs, and Cloud Run as the containerized deployment path for the multi-user backend |
 | **Google Custom Search API** | Powers the General agent for web search on any query that does not require Amazon, Scholar, or Calendar |
 | **Google Calendar API** | The Calendar agent reads and creates events via OAuth |
 | **Google Scholar** (via SerpAPI) | Academic paper search for the Research agent, with automatic product keyword extraction for cross-agent handoff |
@@ -221,14 +229,14 @@ Independence is directly correlated with mental health outcomes for people with 
 
 | Layer | Technology |
 |---|---|
-| Voice input | Deepgram Nova-2 real-time STT |
-| LLM | Gemini 2.5 Flash on Vertex AI (called server-side via a service account) |
-| Authentication | Firebase Authentication (per-user) |
+| Voice input | Deepgram Nova-2 real-time STT (desktop); on-device STT (Android) |
+| LLM | Gemini 2.5 Flash on Vertex AI (called server-side via Application Default Credentials) |
+| Authentication | Firebase Authentication (per-user; server-side verification, enforcement behind a flag) |
 | Agent orchestration | Python (custom multi-agent loop) |
 | Browser automation | Playwright (Chromium) |
-| Voice output | Google Cloud Text-to-Speech |
-| Backend | FastAPI + WebSockets, hosted on Google Cloud |
-| Desktop client | Tkinter (custom LiquidGlass renderer), packaged as a standalone Windows .exe |
+| Voice output | Google Cloud Text-to-Speech (desktop); on-device `flutter_tts` (Android) |
+| Backend | FastAPI + WebSockets; bundled and run locally for the desktop `.exe`, with a Cloud Run deployment path for the mobile-facing backend |
+| Desktop client | Tkinter (custom LiquidGlass renderer), packaged as a standalone Windows `.exe` |
 | Mobile client | Android (Flutter), completed proof of concept; iOS excluded by design (platform permission constraints) |
 | Memory | JSON persistence + in-memory SessionMemory |
 | Window management | Win32 ctypes (SetForegroundWindow) |
