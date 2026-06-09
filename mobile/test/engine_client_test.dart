@@ -44,6 +44,39 @@ class _NoopSink implements WebSocketSink {
       super.noSuchMethod(invocation);
 }
 
+/// A [WebSocketChannel] whose sink records every frame sent, in order, so a test
+/// can assert the on-the-wire frame sequence (auth frame, then query frame).
+class _RecordingChannel implements WebSocketChannel {
+  _RecordingChannel(this.stream);
+
+  @override
+  final Stream<dynamic> stream;
+
+  @override
+  final _RecordingSink sink = _RecordingSink();
+
+  @override
+  Future<void> get ready => Future<void>.value();
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      super.noSuchMethod(invocation);
+}
+
+class _RecordingSink implements WebSocketSink {
+  final List<dynamic> sent = <dynamic>[];
+
+  @override
+  void add(dynamic data) => sent.add(data);
+
+  @override
+  Future<void> close([int? closeCode, String? closeReason]) async {}
+
+  @override
+  dynamic noSuchMethod(Invocation invocation) =>
+      super.noSuchMethod(invocation);
+}
+
 void main() {
   group('encodeQuery (CONTRACT.md §2 — outgoing query frame)', () {
     // The §2 "Real example" query string, verbatim from CONTRACT.md.
@@ -111,6 +144,60 @@ void main() {
         'results': <dynamic>[],
         'scraped': <String, dynamic>{},
       });
+    });
+  });
+
+  group('sendQuery auth frame (mirrors server REQUIRE_AUTH)', () {
+    test('sends the auth frame FIRST, then the query frame, when requireAuth is on',
+        () async {
+      // Drives the optional auth path: requireAuth forced true and a fake
+      // tokenProvider (no live Firebase). The auth frame must precede the query.
+      final StreamController<dynamic> frames = StreamController<dynamic>();
+      addTearDown(frames.close);
+      final _RecordingChannel channel = _RecordingChannel(frames.stream);
+
+      final EngineClient client = EngineClient(
+        connect: (Uri _) => channel,
+        requireAuth: true,
+        tokenProvider: () async => 'fake-id-token',
+      );
+
+      final Future<String> result = client.sendQuery('hello');
+      // Let the auth + query frames flush, then deliver the `response`.
+      await Future<void>.delayed(Duration.zero);
+      frames.add('{"type":"response","text":"hi"}');
+
+      expect(await result, 'hi');
+      expect(channel.sink.sent, <String>[
+        '{"type":"auth","token":"fake-id-token"}',
+        '{"text":"hello"}',
+      ]);
+    });
+
+    test('sends NO auth frame by default (requireAuth off) — only the query',
+        () async {
+      // Default requireAuth (the config const, false): no token is requested and
+      // no auth frame is sent — byte-for-byte the original single-frame exchange.
+      final StreamController<dynamic> frames = StreamController<dynamic>();
+      addTearDown(frames.close);
+      final _RecordingChannel channel = _RecordingChannel(frames.stream);
+
+      bool tokenAsked = false;
+      final EngineClient client = EngineClient(
+        connect: (Uri _) => channel,
+        tokenProvider: () async {
+          tokenAsked = true;
+          return 'should-not-be-sent';
+        },
+      );
+
+      final Future<String> result = client.sendQuery('hello');
+      await Future<void>.delayed(Duration.zero);
+      frames.add('{"type":"response","text":"hi"}');
+
+      expect(await result, 'hi');
+      expect(tokenAsked, isFalse);
+      expect(channel.sink.sent, <String>['{"text":"hello"}']);
     });
   });
 

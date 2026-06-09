@@ -27,3 +27,13 @@ const bool useMockQuery = false;
 
 /// Preset query used when [useMockQuery] is `true`.
 const String mockQuery = "what's the capital of France";
+
+/// Whether the client must authenticate to the backend `/ws` endpoint.
+///
+/// Mirrors the server's `REQUIRE_AUTH` flag (`server.py`). When `true`, the app
+/// initializes Firebase, signs in anonymously, and sends an auth frame carrying
+/// the Firebase ID token as the FIRST message on each `/ws` connection
+/// (before the `{"text": ...}` query). When `false` (default) the app runs with
+/// zero Firebase at runtime and sends no auth frame — byte-for-byte the original
+/// behavior. Keep this in sync with the server's `REQUIRE_AUTH`.
+const bool requireAuth = true;

@@ -42,6 +42,8 @@ dependencies:
   web_socket_channel: 3.0.3
   speech_to_text: 7.4.0
   flutter_tts: 4.2.5
+  firebase_core: ^4.10.0
+  firebase_auth: ^6.5.2
 
 dev_dependencies:
   flutter_test:

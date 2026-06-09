@@ -18,6 +18,7 @@ library;
 import 'dart:async';
 import 'dart:convert';
 
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:web_socket_channel/web_socket_channel.dart';
 
 import 'config.dart';
@@ -85,6 +86,20 @@ const Duration defaultResponseTimeout = Duration(seconds: 30);
 /// [WebSocketChannel.connect].
 typedef ChannelConnector = WebSocketChannel Function(Uri uri);
 
+/// Supplies the Firebase ID token to send in the auth frame, or null if there is
+/// no token. Injectable so tests can simulate auth without a live Firebase.
+typedef TokenProvider = Future<String?> Function();
+
+/// Default [TokenProvider]: the current anonymous user's Firebase ID token, or
+/// null if no user is signed in. Only ever called when [requireAuth] is true (or
+/// a test injects `requireAuth: true`), so it never touches Firebase otherwise.
+Future<String?> _firebaseIdToken() async =>
+    FirebaseAuth.instance.currentUser?.getIdToken();
+
+/// Top-level alias for the config [requireAuth] flag, so the constructor's
+/// `requireAuth` parameter can default to it without name shadowing.
+const bool _defaultRequireAuth = requireAuth;
+
 /// Client for one query/response round trip against the OpenSight `/ws` endpoint.
 class EngineClient {
   EngineClient({
@@ -92,7 +107,11 @@ class EngineClient {
     this.connectTimeout = const Duration(seconds: 5),
     this.responseTimeout = defaultResponseTimeout,
     ChannelConnector? connect,
-  }) : _connect = connect ?? WebSocketChannel.connect;
+    bool? requireAuth,
+    TokenProvider? tokenProvider,
+  })  : _connect = connect ?? WebSocketChannel.connect,
+        requireAuth = requireAuth ?? _defaultRequireAuth,
+        tokenProvider = tokenProvider ?? _firebaseIdToken;
 
   /// WebSocket URL of the backend `/ws` endpoint. Defaults to [engineUrl].
   final String url;
@@ -108,6 +127,16 @@ class EngineClient {
 
   /// Factory used to open the socket; injectable for tests (see [ChannelConnector]).
   final ChannelConnector _connect;
+
+  /// Whether to send an auth frame as the FIRST message on each connection.
+  /// Defaults to the config [requireAuth] flag; injectable so tests can force it
+  /// on without flipping the compile-time const.
+  final bool requireAuth;
+
+  /// Supplies the Firebase ID token for the auth frame. Defaults to the current
+  /// anonymous user's token; injectable so tests can supply a fake token without
+  /// a live Firebase. Only consulted when [requireAuth] is true.
+  final TokenProvider tokenProvider;
 
   /// Open one WebSocket, send [text] as `{"text": ...}`, read frames until the
   /// `response` frame, then close, returning the response text.
@@ -185,6 +214,20 @@ class EngineClient {
       },
       cancelOnError: true,
     );
+
+    // Optional auth frame (CONTRACT mirror of the server's REQUIRE_AUTH): when
+    // [requireAuth] is on, this MUST be the first frame on the socket, sent
+    // before the query. We do NOT wait for an ack — the server stays silent on
+    // success and only closes with code 4001 on failure. If no token is
+    // available we send nothing; the server will then reject the connection.
+    if (requireAuth) {
+      final String? token = await tokenProvider();
+      if (token != null) {
+        channel.sink.add(
+          jsonEncode(<String, String>{'type': 'auth', 'token': token}),
+        );
+      }
+    }
 
     // Send the single query frame (§2).
     channel.sink.add(encodeQuery(text));

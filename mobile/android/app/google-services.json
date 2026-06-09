@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "348346331222",
+    "project_id": "gdg-search-492804",
+    "storage_bucket": "gdg-search-492804.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:348346331222:android:6bcc4884bfc24cafad8bf7",
+        "android_client_info": {
+          "package_name": "com.example.voice_client"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCutGl8qERRLNoDelB6unuwhVtJ1YSye5s"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

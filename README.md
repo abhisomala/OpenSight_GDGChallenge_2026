@@ -112,7 +112,7 @@ flowchart TD
 
 ### How it works
 
-**Secure, keyless clients:** No client holds a model key. The desktop app and the Android client authenticate the user with Firebase Authentication and talk only to the OpenSight backend. The backend, on Google Cloud, holds the Vertex AI credentials as a server-side service account and makes every Gemini call itself. This replaces the original single-embedded-key model: the credential never leaves the server, and Firebase Authentication controls who can use the backend.
+**No client holds the Gemini key:** Clients talk only to the backend, which holds the Vertex AI credentials server-side and makes every Gemini call itself. The backend verifies a Firebase ID token before accepting a connection, so access is gated by per-user identity rather than a shared key. The Android client signs in with Firebase Anonymous Auth and presents its token; extending the same handshake to the desktop client is on the near-term roadmap.
 
 **Production model serving:** Gemini 2.5 Flash runs on Vertex AI, Google's production AI platform, giving production-grade quota and scaling rather than a rate-limited developer key.
 
@@ -151,7 +151,7 @@ We are working directly with organizations and leaders in the BVI space to valid
 
 **Virginia Department for the Blind and Vision Impaired (DBVI):** We are working with the Regional Manager and the Director of Rehabilitation Technology Services to ground OpenSight in the real workflows and needs of the people the agency serves. Their feedback directly informed planned low-vision support such as font scaling.
 
-**Blind Institute of Technology (BIT):** We are working with **Mike Hess, Founder and Executive Director**. Mike is a blind, 20-year IT industry veteran who founded BIT to place BVI professionals in Fortune 500 companies nationwide. BIT's accessibility work has been recognized with national awards and featured at **Google Cloud Next 2019** and Dreamforce 2019.
+**Blind Institute of Technology (BIT):** We are working with their Executive Director to validate and determine product-market fit. BIT's accessibility work has been recognized with national awards and featured at **Google Cloud Next 2019** and Dreamforce 2019.
 
 Structured trials with blind and visually impaired participants are being conducted through these partnerships as the next validation phase, moving beyond simulated testing to direct feedback from the community OpenSight is built for.
 

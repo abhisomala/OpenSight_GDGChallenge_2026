@@ -1,9 +1,32 @@
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 
+import 'config.dart';
+import 'firebase_options.dart';
 import 'home_shell.dart';
 import 'ui/app_theme.dart';
 
-void main() {
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // All Firebase use is gated on [requireAuth] (mirrors the server's
+  // REQUIRE_AUTH). When it is false we touch no Firebase code at all, so the app
+  // runs exactly as before with zero Firebase at runtime.
+  if (requireAuth) {
+    try {
+      await Firebase.initializeApp(
+        options: DefaultFirebaseOptions.currentPlatform,
+      );
+      // Anonymous sign-in gives us an ID token to send on each /ws connection.
+      await FirebaseAuth.instance.signInAnonymously();
+    } catch (e) {
+      // Do not crash the app if init / sign-in fails (e.g. offline) — log and
+      // continue. A later /ws connection simply won't have a token to send.
+      debugPrint('OpenSight: Firebase anonymous sign-in failed: $e');
+    }
+  }
+
   runApp(const MyApp());
 }
 

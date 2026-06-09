@@ -14,6 +14,7 @@ run_local.py
 tts_credentials.json
 dist/
 build/
+*.exe
 *.spec.bak
 .deploy_env.tmp
 OpenSight-debug.spec
