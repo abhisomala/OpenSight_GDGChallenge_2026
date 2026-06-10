@@ -4,6 +4,13 @@
 
 ## Before you start
 
+> Note: the shipped clients default to the deployed **Cloud Run** backend
+> (`wss://opensight-backend-348346331222.us-east1.run.app/ws`), so the `uvicorn`
+> steps below are only needed when running the backend locally, as this demo does.
+> To make the desktop app talk to the local server instead of Cloud Run, set
+> `OPENSIGHT_WS_URL=ws://127.0.0.1:8080/ws` (in `.env`, swap which
+> `OPENSIGHT_WS_URL` line is commented) before starting it.
+
 ```bash
 # Terminal 1
 uvicorn server:app --host 127.0.0.1 --port 8080 

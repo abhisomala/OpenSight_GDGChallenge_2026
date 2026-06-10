@@ -32,7 +32,7 @@ class AppState:
 
         self.agent_ws_url = os.getenv(
             "OPENSIGHT_WS_URL",
-            "ws://127.0.0.1:8080/ws"
+            "wss://opensight-backend-348346331222.us-east1.run.app/ws"
         )
         self.agent_enabled = True
         self.agent_focus = "IDLE"

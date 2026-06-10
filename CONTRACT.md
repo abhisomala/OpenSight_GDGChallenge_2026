@@ -21,16 +21,22 @@ guaranteed by the code, and an illustrative value is shown.
 ### URL / pattern
 - **Client side:** the URL comes from `AppState.agent_ws_url`
   (`app_state.py`, `AppState.__init__`). It is read from the env var
-  `OPENSIGHT_WS_URL`, defaulting to:
+  `OPENSIGHT_WS_URL`, defaulting to the deployed Cloud Run backend, which both
+  clients (desktop and mobile) use by default:
   ```
-  ws://127.0.0.1:8080/ws
+  wss://opensight-backend-348346331222.us-east1.run.app/ws
+  ```
+- **Local-development override:** run the server locally with
+  `uvicorn server:app --port 8080` and point the client at it by setting
+  ```
+  OPENSIGHT_WS_URL=ws://127.0.0.1:8080/ws
   ```
 - The connection is opened in `agent.py`, function `_query_agent_response_async`,
   via `websockets.connect(state.agent_ws_url, open_timeout=5, close_timeout=1)`.
 - **Server side:** the endpoint is declared in `server.py` as
   `@app.websocket("/ws")` → `websocket_endpoint(ws)`. The server is served by
-  `uvicorn server:app --host 0.0.0.0 --port 8080` (`Dockerfile`, `CMD` / `EXPOSE 8080`),
-  which matches the client's default port `8080`.
+  `uvicorn server:app --host 0.0.0.0 --port 8080` (`Dockerfile`, `CMD` / `EXPOSE 8080`) —
+  port `8080` in the container / local run; the Cloud Run URL fronts this over `wss`.
 
 ### One connection per utterance (NOT persistent)
 - **The client opens one WebSocket per user query (per utterance).**
