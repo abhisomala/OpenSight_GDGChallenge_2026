@@ -42,14 +42,14 @@ def _make_client() -> genai.Client:
 
 client = _make_client()  # Google technology: Gemini API (Vertex or Developer backend)
 
-# Primary model is read from GEMINI_MODEL env, defaulting to gemini-2.5-flash
+# Primary model is read from GEMINI_MODEL env, defaulting to gemini-3.5-flash
 # because that is the working primary on Vertex AI us-central1 today —
 # gemini-3.5-flash and gemini-3.1-flash-lite are not yet GA in that region
 # (return 404) but are kept in the chain as forward-compat no-ops.
-PRIMARY_MODEL = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
+PRIMARY_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.5-flash")
 
 _FALLBACK_CHAIN = [
-    "gemini-2.5-flash",       # working primary on Vertex us-central1
+    "gemini-3.5-flash",       # working primary on Vertex us-central1
     "gemini-2.5-flash-lite",  # working lite on Vertex us-central1
     "gemini-3.5-flash",       # forward-compat: 404s on Vertex us-central1 today
     "gemini-3.1-flash-lite",  # forward-compat: 404s on Vertex us-central1 today
