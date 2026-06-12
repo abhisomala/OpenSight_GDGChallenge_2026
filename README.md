@@ -10,7 +10,7 @@
 
 ## Demo
 
-> **[▶ Watch the 2-minute demo](https://youtu.be/UOYZ2oXvdvM)** where OpenSight opens a browser and completes the task live.
+> **[▶ Watch the 2-minute demo](https://youtu.be/mI7sG241MZM)** where OpenSight opens a browser and completes the task live.
 
 Three spoken sentences take the user from a research question to a chosen product. The video shows the assistant opening a browser and driving the live web end to end, advancing its reasoning in real time as it goes. Cross-agent memory carries context across tasks, with zero manual navigation. The full step-by-step demo script lives in [DEMO.md](DEMO.md).
 
